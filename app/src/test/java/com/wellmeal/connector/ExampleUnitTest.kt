@@ -1,4 +1,4 @@
-package com.personalhealth.connector
+package com.wellmeal.connector
 
 import org.junit.Test
 

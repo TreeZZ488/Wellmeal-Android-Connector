@@ -22,5 +22,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "Personal Health Connector"
+rootProject.name = "Wellmeal Android Connector"
 include(":app")

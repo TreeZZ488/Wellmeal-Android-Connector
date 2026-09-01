@@ -4,13 +4,13 @@ plugins {
 }
 
 android {
-    namespace = "com.personalhealth.connector"
+    namespace = "com.wellmeal.connector"
     compileSdk {
         version = release(37)
     }
 
     defaultConfig {
-        applicationId = "com.personalhealth.connector"
+        applicationId = "com.wellmeal.connector"
         minSdk = 28
         targetSdk = 37
         versionCode = 1

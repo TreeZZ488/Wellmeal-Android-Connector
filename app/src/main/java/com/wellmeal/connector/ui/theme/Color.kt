@@ -1,4 +1,4 @@
-package com.personalhealth.connector.ui.theme
+package com.wellmeal.connector.ui.theme
 
 import androidx.compose.ui.graphics.Color
 

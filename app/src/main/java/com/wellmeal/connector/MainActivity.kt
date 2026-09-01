@@ -1,4 +1,4 @@
-package com.personalhealth.connector
+package com.wellmeal.connector
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -28,6 +28,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.HealthConnectFeatures
@@ -73,7 +74,7 @@ fun HealthConnectScreen() {
         ) {
 
             Text(
-                text = "Personal Health Connector",
+                text = stringResource(R.string.app_name),
                 style = MaterialTheme.typography.headlineSmall
             )
 
@@ -256,7 +257,7 @@ fun HealthConnectScreen() {
     ) {
 
         Text(
-            text = "Personal Health Connector",
+            text = stringResource(R.string.app_name),
             style = MaterialTheme.typography.headlineSmall
         )
 

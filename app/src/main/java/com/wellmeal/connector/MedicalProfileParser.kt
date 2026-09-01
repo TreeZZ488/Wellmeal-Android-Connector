@@ -1,4 +1,4 @@
-package com.personalhealth.connector
+package com.wellmeal.connector
 
 import androidx.health.connect.client.feature.ExperimentalPersonalHealthRecordApi
 import androidx.health.connect.client.records.MedicalResource

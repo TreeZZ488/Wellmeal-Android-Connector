@@ -1,4 +1,4 @@
-package com.personalhealth.connector
+package com.wellmeal.connector
 
 import android.content.Context
 import org.json.JSONArray

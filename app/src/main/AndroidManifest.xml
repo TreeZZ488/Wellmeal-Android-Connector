@@ -23,7 +23,7 @@
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:theme="@style/Theme.PersonalHealthConnector">
+        android:theme="@style/Theme.WellmealConnector">
 
         <!-- Health Connect permission rationale -->
         <activity
@@ -50,7 +50,7 @@
             android:name=".MainActivity"
             android:exported="true"
             android:label="@string/app_name"
-            android:theme="@style/Theme.PersonalHealthConnector"
+            android:theme="@style/Theme.WellmealConnector"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
