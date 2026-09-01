@@ -1,7 +1,6 @@
 package com.personalhealth.connector
 
 import android.content.Context
-import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.time.ZoneId
@@ -12,8 +11,7 @@ class HealthJsonExporter(
 ) {
 
     fun exportDailyHealth(
-        snapshot: DailyHealthSnapshot,
-        profile: HealthProfile = HealthProfile()
+        snapshot: DailyHealthSnapshot
     ): File {
 
         val root = JSONObject()
@@ -56,52 +54,6 @@ class HealthJsonExporter(
                 .putNullable(
                     "totalMinutes",
                     snapshot.sleepMinutes
-                )
-        )
-
-        // Profile data
-        root.put(
-            "profile",
-            JSONObject()
-                .put(
-                    "allergies",
-                    JSONArray().apply {
-                        profile.allergies.forEach { allergy ->
-                            put(
-                                JSONObject()
-                                    .put("name", allergy.name)
-                                    .putNullable(
-                                        "category",
-                                        allergy.category
-                                    )
-                                    .putNullable(
-                                        "severity",
-                                        allergy.severity
-                                    )
-                            )
-                        }
-                    }
-                )
-                .put(
-                    "dietaryRestrictions",
-                    JSONArray(
-                        profile.dietaryRestrictions
-                    )
-                )
-                .put(
-                    "medications",
-                    JSONArray().apply {
-                        profile.medications.forEach { medication ->
-                            put(
-                                JSONObject()
-                                    .put("name", medication.name)
-                                    .putNullable(
-                                        "status",
-                                        medication.status
-                                    )
-                            )
-                        }
-                    }
                 )
         )
 

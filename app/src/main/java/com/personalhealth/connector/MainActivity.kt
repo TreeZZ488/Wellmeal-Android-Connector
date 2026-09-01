@@ -6,12 +6,17 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -190,8 +195,34 @@ fun HealthConnectScreen() {
         MedicalProfileRepository(context)
     }
 
+    val medicalProfileParser = remember {
+        MedicalProfileParser()
+    }
+
     var medicalResult by remember {
         mutableStateOf<String?>(null)
+    }
+
+    var healthProfile by remember {
+        mutableStateOf<HealthProfile?>(null)
+    }
+
+    val dietaryRestrictionStore = remember {
+        DietaryRestrictionStore(context)
+    }
+
+    var dietaryRestrictions by remember {
+        mutableStateOf(
+            dietaryRestrictionStore.load()
+        )
+    }
+
+    var dietaryRestrictionInput by remember {
+        mutableStateOf("")
+    }
+
+    val profileJsonExporter = remember {
+        HealthProfileJsonExporter(context)
     }
 
     val scope = rememberCoroutineScope()
@@ -216,8 +247,11 @@ fun HealthConnectScreen() {
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .verticalScroll(
+                rememberScrollState()
+            )
             .padding(24.dp),
-        verticalArrangement = Arrangement.Center,
+        verticalArrangement = Arrangement.Top,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
 
@@ -327,9 +361,45 @@ fun HealthConnectScreen() {
                         val medications =
                             medicalRepository.readMedications()
 
+                        val profile =
+                            medicalProfileParser.parse(
+                                allergies = allergies,
+                                medications = medications,
+                                dietaryRestrictions =
+                                    dietaryRestrictions
+                            )
+
+                        healthProfile = profile
+
+                        val allergyNames =
+                            profile.allergies
+                                .joinToString(", ") {
+                                    it.name
+                                }
+                                .ifBlank {
+                                    "None"
+                                }
+
+                        val medicationNames =
+                            profile.medications
+                                .joinToString(", ") {
+                                    it.name
+                                }
+                                .ifBlank {
+                                    "None"
+                                }
+
+                        val dietaryRestrictionNames =
+                            profile.dietaryRestrictions
+                                .joinToString(", ")
+                                .ifBlank {
+                                    "None"
+                                }
+
                         medicalResult =
-                            "Allergies: ${allergies.size}\n" +
-                            "Medications: ${medications.size}"
+                            "Allergies: $allergyNames\n" +
+                            "Medications: $medicationNames\n" +
+                            "Dietary restrictions: $dietaryRestrictionNames"
 
                     } catch (e: Exception) {
 
@@ -349,6 +419,174 @@ fun HealthConnectScreen() {
             Spacer(modifier = Modifier.height(8.dp))
 
             Text(it)
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        Button(
+            enabled = healthProfile != null,
+            onClick = {
+
+                val currentProfile =
+                    healthProfile?.copy(
+                        dietaryRestrictions =
+                            dietaryRestrictions
+                    )
+
+                if (currentProfile != null) {
+
+                    try {
+
+                        val file =
+                            profileJsonExporter.exportProfile(
+                                currentProfile
+                            )
+
+                        medicalResult =
+                            "Profile exported: ${file.name}"
+
+                    } catch (e: Exception) {
+
+                        medicalResult =
+                            "Profile export failed: ${
+                                e.message ?: "Unknown error"
+                            }"
+                    }
+                }
+            }
+        ) {
+            Text("Export Profile JSON")
+        }
+
+        // Dietary Restrictions UI section.
+        Spacer(modifier = Modifier.height(24.dp))
+
+        Text(
+            text = "Dietary Restrictions",
+            style = MaterialTheme.typography.titleMedium
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Text(
+            "Add dietary restrictions that are not available from Health Connect."
+        )
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        OutlinedTextField(
+            value = dietaryRestrictionInput,
+            onValueChange = {
+                dietaryRestrictionInput = it
+            },
+            label = {
+                Text("Restriction")
+            },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Button(
+            enabled =
+                dietaryRestrictionInput
+                    .trim()
+                    .isNotEmpty(),
+            onClick = {
+
+                val newRestriction =
+                    dietaryRestrictionInput.trim()
+
+                val alreadyExists =
+                    dietaryRestrictions.any {
+                        it.equals(
+                            newRestriction,
+                            ignoreCase = true
+                        )
+                    }
+
+                if (!alreadyExists) {
+
+                    val updatedRestrictions =
+                        (dietaryRestrictions +
+                            newRestriction)
+                            .sortedBy {
+                                it.lowercase()
+                            }
+
+                    dietaryRestrictions =
+                        updatedRestrictions
+
+                    dietaryRestrictionStore.save(
+                        updatedRestrictions
+                    )
+
+                    healthProfile =
+                        healthProfile?.copy(
+                            dietaryRestrictions =
+                                updatedRestrictions
+                        )
+                }
+
+                dietaryRestrictionInput = ""
+            }
+        ) {
+            Text("Add Restriction")
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        if (dietaryRestrictions.isEmpty()) {
+
+            Text("No dietary restrictions")
+
+        } else {
+
+            dietaryRestrictions.forEach { restriction ->
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement =
+                        Arrangement.SpaceBetween,
+                    verticalAlignment =
+                        Alignment.CenterVertically
+                ) {
+
+                    Text(restriction)
+
+                    Button(
+                        onClick = {
+
+                            val updatedRestrictions =
+                                dietaryRestrictions
+                                    .filterNot {
+                                        it == restriction
+                                    }
+
+                            dietaryRestrictions =
+                                updatedRestrictions
+
+                            dietaryRestrictionStore.save(
+                                updatedRestrictions
+                            )
+
+                            healthProfile =
+                                healthProfile?.copy(
+                                    dietaryRestrictions =
+                                        updatedRestrictions
+                                )
+                        }
+                    ) {
+                        Text("Remove")
+                    }
+                }
+
+                Spacer(
+                    modifier =
+                        Modifier.height(4.dp)
+                )
+            }
         }
 
         // Daily health summary section.
