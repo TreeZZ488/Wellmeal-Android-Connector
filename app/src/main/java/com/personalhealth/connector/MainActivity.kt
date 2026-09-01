@@ -186,6 +186,14 @@ fun HealthConnectScreen() {
         HealthJsonExporter(context)
     }
 
+    val medicalRepository = remember {
+        MedicalProfileRepository(context)
+    }
+
+    var medicalResult by remember {
+        mutableStateOf<String?>(null)
+    }
+
     val scope = rememberCoroutineScope()
 
     // Store the currently loaded daily health snapshot.
@@ -299,6 +307,48 @@ fun HealthConnectScreen() {
             }
         ) {
             Text("Request Medical Permissions")
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        Button(
+            enabled =
+                personalHealthRecordAvailable &&
+                medicalAllGranted,
+            onClick = {
+
+                scope.launch {
+
+                    try {
+
+                        val allergies =
+                            medicalRepository.readAllergies()
+
+                        val medications =
+                            medicalRepository.readMedications()
+
+                        medicalResult =
+                            "Allergies: ${allergies.size}\n" +
+                            "Medications: ${medications.size}"
+
+                    } catch (e: Exception) {
+
+                        medicalResult =
+                            "Medical read failed: ${
+                                e.message ?: "Unknown error"
+                            }"
+                    }
+                }
+            }
+        ) {
+            Text("Read Medical Profile")
+        }
+
+        medicalResult?.let {
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text(it)
         }
 
         // Daily health summary section.
