@@ -4,23 +4,36 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.layout.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Button
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.health.connect.client.HealthConnectClient
+import androidx.health.connect.client.HealthConnectFeatures
 import androidx.health.connect.client.PermissionController
+import androidx.health.connect.client.feature.ExperimentalPersonalHealthRecordApi
 import androidx.health.connect.client.permission.HealthPermission
 import androidx.health.connect.client.records.ExerciseSessionRecord
 import androidx.health.connect.client.records.HeartRateRecord
 import androidx.health.connect.client.records.SleepSessionRecord
 import androidx.health.connect.client.records.StepsRecord
 import kotlinx.coroutines.launch
-import androidx.health.connect.client.HealthConnectFeatures
-import androidx.health.connect.client.feature.ExperimentalPersonalHealthRecordApi
 
 class MainActivity : ComponentActivity() {
 
@@ -72,14 +85,15 @@ fun HealthConnectScreen() {
         HealthConnectClient.getOrCreate(context)
     }
 
+    // Check Personal Health Record support.
     val personalHealthRecordAvailable = remember {
         healthConnectClient.features.getFeatureStatus(
             HealthConnectFeatures.FEATURE_PERSONAL_HEALTH_RECORD
         ) == HealthConnectFeatures.FEATURE_STATUS_AVAILABLE
     }
 
-    // Define the Health Connect permissions used by V0.1.
-    val permissions = remember {
+    // Define fitness permissions.
+    val fitnessPermissions = remember {
         setOf(
             HealthPermission.getReadPermission(
                 StepsRecord::class
@@ -96,21 +110,45 @@ fun HealthConnectScreen() {
         )
     }
 
+    // Define optional medical profile permissions.
+    val medicalPermissions = remember {
+        setOf(
+            HealthPermission
+                .PERMISSION_READ_MEDICAL_DATA_ALLERGIES_INTOLERANCES,
+
+            HealthPermission
+                .PERMISSION_READ_MEDICAL_DATA_MEDICATIONS
+        )
+    }
+
+    // Store all currently granted Health Connect permissions.
     var grantedPermissions by remember {
         mutableStateOf<Set<String>>(emptySet())
     }
 
-    // Launcher for Health Connect permission requests.
-    val permissionLauncher =
+    // Request fitness permissions.
+    val fitnessPermissionLauncher =
         rememberLauncherForActivityResult(
             PermissionController
                 .createRequestPermissionResultContract()
         ) { result ->
 
-            grantedPermissions = result
+            grantedPermissions =
+                grantedPermissions + result
         }
 
-    // Read the current permission state when the screen starts.
+    // Request optional medical profile permissions.
+    val medicalPermissionLauncher =
+        rememberLauncherForActivityResult(
+            PermissionController
+                .createRequestPermissionResultContract()
+        ) { result ->
+
+            grantedPermissions =
+                grantedPermissions + result
+        }
+
+    // Read the existing permission state when the app starts.
     LaunchedEffect(Unit) {
 
         grantedPermissions =
@@ -119,9 +157,27 @@ fun HealthConnectScreen() {
                 .getGrantedPermissions()
     }
 
-    val allGranted =
-        grantedPermissions.containsAll(permissions)
+    val fitnessGrantedCount =
+        fitnessPermissions.count {
+            grantedPermissions.contains(it)
+        }
 
+    val fitnessAllGranted =
+        grantedPermissions.containsAll(
+            fitnessPermissions
+        )
+
+    val medicalGrantedCount =
+        medicalPermissions.count {
+            grantedPermissions.contains(it)
+        }
+
+    val medicalAllGranted =
+        grantedPermissions.containsAll(
+            medicalPermissions
+        )
+
+    // Create data services.
     val repository = remember {
         HealthConnectRepository(context)
     }
@@ -132,6 +188,7 @@ fun HealthConnectScreen() {
 
     val scope = rememberCoroutineScope()
 
+    // Store the currently loaded daily health snapshot.
     var snapshot by remember {
         mutableStateOf<DailyHealthSnapshot?>(null)
     }
@@ -161,7 +218,7 @@ fun HealthConnectScreen() {
             style = MaterialTheme.typography.headlineSmall
         )
 
-        Spacer(modifier = Modifier.height(24.dp))
+        Spacer(modifier = Modifier.height(20.dp))
 
         Text("Health Connect: Available")
 
@@ -175,10 +232,18 @@ fun HealthConnectScreen() {
             }
         )
 
-        Spacer(modifier = Modifier.height(12.dp))
+        // Fitness permission section.
+        Spacer(modifier = Modifier.height(20.dp))
 
         Text(
-            if (allGranted) {
+            text = "Fitness Permissions",
+            style = MaterialTheme.typography.titleMedium
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Text(
+            if (fitnessAllGranted) {
                 "Health permissions: Granted"
             } else {
                 "Health permissions: Not granted"
@@ -186,20 +251,58 @@ fun HealthConnectScreen() {
         )
 
         Text(
-            "Granted: ${grantedPermissions.size} / ${permissions.size}"
+            "Granted: $fitnessGrantedCount / ${fitnessPermissions.size}"
         )
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(12.dp))
 
         Button(
             onClick = {
-                permissionLauncher.launch(permissions)
+                fitnessPermissionLauncher.launch(
+                    fitnessPermissions
+                )
             }
         ) {
             Text("Request Health Permissions")
         }
 
-        Spacer(modifier = Modifier.height(28.dp))
+        // Optional medical profile permission section.
+        Spacer(modifier = Modifier.height(20.dp))
+
+        Text(
+            text = "Optional Medical Profile",
+            style = MaterialTheme.typography.titleMedium
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Text(
+            if (medicalAllGranted) {
+                "Medical permissions: Granted"
+            } else {
+                "Medical permissions: Not granted"
+            }
+        )
+
+        Text(
+            "Granted: $medicalGrantedCount / ${medicalPermissions.size}"
+        )
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        Button(
+            enabled = personalHealthRecordAvailable,
+            onClick = {
+                medicalPermissionLauncher.launch(
+                    medicalPermissions
+                )
+            }
+        ) {
+            Text("Request Medical Permissions")
+        }
+
+        // Daily health summary section.
+        Spacer(modifier = Modifier.height(24.dp))
 
         if (!dataLoaded) {
 
@@ -272,9 +375,9 @@ fun HealthConnectScreen() {
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Read yesterday's Health Connect summary.
+        // Read yesterday's aggregated Health Connect data.
         Button(
-            enabled = allGranted,
+            enabled = fitnessAllGranted,
             onClick = {
 
                 scope.launch {
@@ -300,13 +403,12 @@ fun HealthConnectScreen() {
                 }
             }
         ) {
-
             Text("Read Yesterday Summary")
         }
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // Export the current snapshot to an internal JSON file.
+        // Export the loaded snapshot to JSON.
         Button(
             enabled = snapshot != null,
             onClick = {
@@ -335,7 +437,6 @@ fun HealthConnectScreen() {
                 }
             }
         ) {
-
             Text("Export JSON")
         }
 
