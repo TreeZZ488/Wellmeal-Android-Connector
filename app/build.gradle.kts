@@ -48,6 +48,7 @@ dependencies {
     implementation("com.microsoft.identity.client:msal:8.4.2")
     implementation("androidx.navigation:navigation-compose:2.8.0")
     implementation("androidx.compose.material:material-icons-core")
+    implementation("androidx.work:work-runtime-ktx:2.11.2")
     testImplementation(libs.junit)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)

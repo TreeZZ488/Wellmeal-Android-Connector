@@ -23,10 +23,17 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.health.connect.client.feature.ExperimentalPersonalHealthRecordApi
+import androidx.work.ExistingWorkPolicy
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkInfo
+import androidx.work.WorkManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import java.io.File
@@ -43,6 +50,8 @@ fun SettingsScreen(
     backgroundReadAvailable: Boolean,
     backgroundReadGranted: Boolean,
     onLaunchBackgroundPermission: () -> Unit,
+    notificationPermissionGranted: Boolean,
+    onLaunchNotificationPermission: () -> Unit,
     authManager: MicrosoftAuthManager,
     oneDriveUploader: OneDriveUploader,
     personalHealthRecordAvailable: Boolean,
@@ -78,6 +87,22 @@ fun SettingsScreen(
 ) {
     val currentUser = authManager.currentUser
     val timeFormatter = DateTimeFormatter.ofPattern("HH:mm", Locale.US)
+
+    val workInfoList by remember(context) {
+        WorkManager.getInstance(context)
+            .getWorkInfosForUniqueWorkFlow("wellmeal_auto_sync_test")
+    }.collectAsState(initial = emptyList())
+
+    val workInfo = workInfoList.firstOrNull()
+    val testStatusText = when (workInfo?.state) {
+        WorkInfo.State.ENQUEUED -> "Automatic sync test: Enqueued"
+        WorkInfo.State.RUNNING -> "Automatic sync test: Running"
+        WorkInfo.State.SUCCEEDED -> "Automatic sync test: Succeeded"
+        WorkInfo.State.FAILED -> "Automatic sync test: Failed"
+        WorkInfo.State.BLOCKED -> "Automatic sync test: Enqueued"
+        WorkInfo.State.CANCELLED -> "Automatic sync test: Cancelled"
+        null -> null
+    }
 
     Column(
         modifier = Modifier
@@ -175,6 +200,38 @@ fun SettingsScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodyMedium
                     )
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Sync Notifications Section
+                Text(
+                    text = "Sync Notifications",
+                    style = MaterialTheme.typography.titleSmall
+                )
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                if (notificationPermissionGranted) {
+                    Text(
+                        text = "Notifications: Allowed",
+                        color = MaterialTheme.colorScheme.primary,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                } else {
+                    Text(
+                        text = "Notifications: Not allowed",
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Button(
+                        onClick = onLaunchNotificationPermission
+                    ) {
+                        Text("Allow Notifications")
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
@@ -323,6 +380,39 @@ fun SettingsScreen(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Schedule Status Summary
+                Text(
+                    text = "Schedule Status",
+                    style = MaterialTheme.typography.titleSmall
+                )
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                val scheduleStatusText = when {
+                    !syncSettings.automaticSyncEnabled -> "Automatic sync is disabled."
+                    backgroundReadAvailable && !backgroundReadGranted -> "Schedule inactive until background access is granted."
+                    else -> {
+                        val formattedTimes = syncSettings.syncTimes.joinToString(", ") {
+                            it.format(timeFormatter)
+                        }
+                        "Scheduled: $formattedTimes daily"
+                    }
+                }
+
+                Text(
+                    text = scheduleStatusText,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (!syncSettings.automaticSyncEnabled) {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    } else if (backgroundReadAvailable && !backgroundReadGranted) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.primary
+                    }
+                )
             }
         }
 
@@ -353,6 +443,34 @@ fun SettingsScreen(
                 "Personal Health Record: Unavailable"
             }
         )
+
+        // WorkManager section
+        Spacer(modifier = Modifier.height(20.dp))
+
+        Text(
+            text = "WorkManager",
+            style = MaterialTheme.typography.titleMedium
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Button(
+            onClick = {
+                val request = OneTimeWorkRequestBuilder<SyncWorker>().build()
+                WorkManager.getInstance(context).enqueueUniqueWork(
+                    "wellmeal_auto_sync_test",
+                    ExistingWorkPolicy.REPLACE,
+                    request
+                )
+            }
+        ) {
+            Text("Run Automatic Sync Test")
+        }
+
+        testStatusText?.let { status ->
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(status)
+        }
 
         // Microsoft Account section
         Spacer(modifier = Modifier.height(20.dp))

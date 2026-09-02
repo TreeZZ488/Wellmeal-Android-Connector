@@ -1,7 +1,11 @@
 package com.wellmeal.connector
 
+import android.Manifest
+import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Arrangement
@@ -276,6 +280,21 @@ fun HealthConnectScreen() {
         OneDriveUploader()
     }
 
+    val syncNotificationManager = remember {
+        SyncNotificationManager(context)
+    }
+
+    var notificationPermissionGranted by remember {
+        mutableStateOf(syncNotificationManager.isNotificationPermissionGranted())
+    }
+
+    val notificationPermissionLauncher =
+        rememberLauncherForActivityResult(
+            ActivityResultContracts.RequestPermission()
+        ) { isGranted ->
+            notificationPermissionGranted = isGranted || syncNotificationManager.isNotificationPermissionGranted()
+        }
+
     val syncHistoryStore = remember {
         SyncHistoryStore(context)
     }
@@ -286,6 +305,17 @@ fun HealthConnectScreen() {
 
     var syncSettings by remember {
         mutableStateOf(syncSettingsStore.load())
+    }
+
+    val automaticSyncScheduler = remember {
+        AutomaticSyncScheduler(context)
+    }
+
+    LaunchedEffect(syncSettings, backgroundReadGranted) {
+        automaticSyncScheduler.ensureScheduled(
+            settings = syncSettings,
+            backgroundAccessGranted = backgroundReadGranted
+        )
     }
 
     val syncCoordinator = remember {
@@ -438,13 +468,27 @@ fun HealthConnectScreen() {
                     context = context,
                     syncSettings = syncSettings,
                     onSyncSettingsChanged = { updatedSettings ->
+                        Log.d(
+                            "WellmealScheduler",
+                            "Settings changed in SettingsScreen -> reschedule: enabled=${updatedSettings.automaticSyncEnabled} times=${updatedSettings.syncTimes} wifiOnly=${updatedSettings.wifiOnly} avoidLowBattery=${updatedSettings.avoidLowBattery}"
+                        )
                         syncSettings = updatedSettings
                         syncSettingsStore.save(updatedSettings)
+                        automaticSyncScheduler.reschedule(
+                            settings = updatedSettings,
+                            backgroundAccessGranted = backgroundReadGranted
+                        )
                     },
                     backgroundReadAvailable = backgroundReadAvailable,
                     backgroundReadGranted = backgroundReadGranted,
                     onLaunchBackgroundPermission = {
                         backgroundPermissionLauncher.launch(backgroundPermissions)
+                    },
+                    notificationPermissionGranted = notificationPermissionGranted,
+                    onLaunchNotificationPermission = {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                        }
                     },
                     authManager = authManager,
                     oneDriveUploader = oneDriveUploader,

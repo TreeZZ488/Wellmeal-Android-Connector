@@ -16,12 +16,15 @@ import com.microsoft.identity.client.SignInParameters
 import com.microsoft.identity.client.SilentAuthenticationCallback
 import com.microsoft.identity.client.exception.MsalClientException
 import com.microsoft.identity.client.exception.MsalException
+import kotlinx.coroutines.CompletableDeferred
 
 class MicrosoftAuthManager(
     context: Context
 ) {
 
     private var msalApp: ISingleAccountPublicClientApplication? = null
+
+    private val readyDeferred = CompletableDeferred<Result<IAccount?>>()
 
     var currentUser by mutableStateOf<IAccount?>(null)
         private set
@@ -41,15 +44,44 @@ class MicrosoftAuthManager(
                 override fun onCreated(application: ISingleAccountPublicClientApplication) {
                     msalApp = application
                     isInitialized = true
+
                     // Restore currently signed-in account
-                    loadAccount()
+                    application.getCurrentAccountAsync(
+                        object : ISingleAccountPublicClientApplication.CurrentAccountCallback {
+                            override fun onAccountLoaded(activeAccount: IAccount?) {
+                                currentUser = activeAccount
+                                authError = null
+                                readyDeferred.complete(Result.success(activeAccount))
+                            }
+
+                            override fun onAccountChanged(
+                                priorAccount: IAccount?,
+                                currentAccount: IAccount?
+                            ) {
+                                currentUser = currentAccount
+                            }
+
+                            override fun onError(exception: MsalException) {
+                                authError = exception.message ?: "Failed to load account"
+                                readyDeferred.complete(Result.failure(exception))
+                            }
+                        }
+                    )
                 }
 
                 override fun onError(exception: MsalException) {
                     authError = exception.message ?: "Failed to initialize MSAL"
+                    readyDeferred.complete(Result.failure(exception))
                 }
             }
         )
+    }
+
+    /**
+     * Suspends until MSAL initialization and cached account restoration finish.
+     */
+    suspend fun awaitReady(): Result<IAccount?> {
+        return readyDeferred.await()
     }
 
     /**
