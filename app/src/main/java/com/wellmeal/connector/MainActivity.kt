@@ -1,5 +1,6 @@
 package com.wellmeal.connector
 
+import android.app.Activity
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -226,6 +227,10 @@ fun HealthConnectScreen() {
         HealthProfileJsonExporter(context)
     }
 
+    val authManager = remember {
+        MicrosoftAuthManager(context)
+    }
+
     val scope = rememberCoroutineScope()
 
     // Store the currently loaded daily health snapshot.
@@ -274,6 +279,57 @@ fun HealthConnectScreen() {
                 "Personal Health Record: Unavailable"
             }
         )
+
+        // Microsoft Account section.
+        Spacer(modifier = Modifier.height(20.dp))
+
+        Text(
+            text = "Microsoft Account",
+            style = MaterialTheme.typography.titleMedium
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        val currentUser = authManager.currentUser
+
+        if (currentUser == null) {
+
+            Text("Status: Not signed in")
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Button(
+                onClick = {
+                    val activity = context as? Activity
+                    if (activity != null) {
+                        authManager.signIn(activity)
+                    }
+                }
+            ) {
+                Text("Sign in with Microsoft")
+            }
+
+        } else {
+
+            Text("Signed in: ${currentUser.username}")
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Button(
+                onClick = {
+                    authManager.signOut()
+                }
+            ) {
+                Text("Sign out")
+            }
+        }
+
+        authManager.authError?.let { error ->
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text("Auth error: $error")
+        }
 
         // Fitness permission section.
         Spacer(modifier = Modifier.height(20.dp))
