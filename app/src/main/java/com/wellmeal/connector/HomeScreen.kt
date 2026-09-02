@@ -29,6 +29,9 @@ fun HomeScreen(
     healthProfile: HealthProfile?,
     dietaryRestrictions: List<String>,
     syncHistoryStore: SyncHistoryStore,
+    syncSettings: SyncSettings,
+    backgroundReadAvailable: Boolean,
+    backgroundReadGranted: Boolean,
     onSyncNow: () -> Unit
 ) {
     val currentUser = authManager.currentUser
@@ -81,6 +84,24 @@ fun HomeScreen(
                     "Not connected"
                 }
                 Text("Microsoft Account: $msStatus")
+            }
+        }
+
+        if (syncSettings.automaticSyncEnabled && backgroundReadAvailable && !backgroundReadGranted) {
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Card(
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp)
+                ) {
+                    Text(
+                        text = "Automatic sync needs background health access.",
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
             }
         }
 

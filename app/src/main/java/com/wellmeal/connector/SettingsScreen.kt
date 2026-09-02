@@ -40,6 +40,9 @@ fun SettingsScreen(
     context: Context,
     syncSettings: SyncSettings,
     onSyncSettingsChanged: (SyncSettings) -> Unit,
+    backgroundReadAvailable: Boolean,
+    backgroundReadGranted: Boolean,
+    onLaunchBackgroundPermission: () -> Unit,
     authManager: MicrosoftAuthManager,
     oneDriveUploader: OneDriveUploader,
     personalHealthRecordAvailable: Boolean,
@@ -122,6 +125,55 @@ fun SettingsScreen(
                                 syncSettings.copy(automaticSyncEnabled = isChecked).normalized()
                             )
                         }
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Background Health Access Status & Action
+                Text(
+                    text = "Background Access",
+                    style = MaterialTheme.typography.titleSmall
+                )
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                if (backgroundReadAvailable) {
+                    if (backgroundReadGranted) {
+                        Text(
+                            text = "Background health access: Granted",
+                            color = MaterialTheme.colorScheme.primary,
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    } else {
+                        Text(
+                            text = "Background health access: Required",
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+
+                        if (syncSettings.automaticSyncEnabled) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Automatic sync cannot run until background health access is granted.",
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        Button(
+                            onClick = onLaunchBackgroundPermission
+                        ) {
+                            Text("Grant Background Access")
+                        }
+                    }
+                } else {
+                    Text(
+                        text = "Background health access: Not supported on this device",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodyMedium
                     )
                 }
 

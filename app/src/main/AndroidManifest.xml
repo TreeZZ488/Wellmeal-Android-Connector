@@ -14,6 +14,9 @@
     <uses-permission
         android:name="android.permission.health.READ_MEDICAL_DATA_MEDICATIONS" />
 
+    <uses-permission
+        android:name="android.permission.health.READ_HEALTH_DATA_IN_BACKGROUND" />
+
     <queries>
         <package android:name="com.google.android.apps.healthdata" />
     </queries>

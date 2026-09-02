@@ -144,6 +144,19 @@ fun HealthConnectScreen() {
         )
     }
 
+    // Check background health-data read support.
+    val backgroundReadAvailable = remember {
+        healthConnectClient.features.getFeatureStatus(
+            HealthConnectFeatures.FEATURE_READ_HEALTH_DATA_IN_BACKGROUND
+        ) == HealthConnectFeatures.FEATURE_STATUS_AVAILABLE
+    }
+
+    val backgroundPermissions = remember {
+        setOf(
+            HealthPermission.PERMISSION_READ_HEALTH_DATA_IN_BACKGROUND
+        )
+    }
+
     // Store all currently granted Health Connect permissions.
     var grantedPermissions by remember {
         mutableStateOf<Set<String>>(emptySet())
@@ -162,6 +175,17 @@ fun HealthConnectScreen() {
 
     // Request optional medical profile permissions.
     val medicalPermissionLauncher =
+        rememberLauncherForActivityResult(
+            PermissionController
+                .createRequestPermissionResultContract()
+        ) { result ->
+
+            grantedPermissions =
+                grantedPermissions + result
+        }
+
+    // Request background health read permission.
+    val backgroundPermissionLauncher =
         rememberLauncherForActivityResult(
             PermissionController
                 .createRequestPermissionResultContract()
@@ -198,6 +222,11 @@ fun HealthConnectScreen() {
     val medicalAllGranted =
         grantedPermissions.containsAll(
             medicalPermissions
+        )
+
+    val backgroundReadGranted =
+        grantedPermissions.contains(
+            HealthPermission.PERMISSION_READ_HEALTH_DATA_IN_BACKGROUND
         )
 
     // Create data services.
@@ -349,6 +378,9 @@ fun HealthConnectScreen() {
                     healthProfile = healthProfile,
                     dietaryRestrictions = dietaryRestrictions,
                     syncHistoryStore = syncHistoryStore,
+                    syncSettings = syncSettings,
+                    backgroundReadAvailable = backgroundReadAvailable,
+                    backgroundReadGranted = backgroundReadGranted,
                     onSyncNow = {
                         scope.launch {
                             isSyncing = true
@@ -408,6 +440,11 @@ fun HealthConnectScreen() {
                     onSyncSettingsChanged = { updatedSettings ->
                         syncSettings = updatedSettings
                         syncSettingsStore.save(updatedSettings)
+                    },
+                    backgroundReadAvailable = backgroundReadAvailable,
+                    backgroundReadGranted = backgroundReadGranted,
+                    onLaunchBackgroundPermission = {
+                        backgroundPermissionLauncher.launch(backgroundPermissions)
                     },
                     authManager = authManager,
                     oneDriveUploader = oneDriveUploader,
