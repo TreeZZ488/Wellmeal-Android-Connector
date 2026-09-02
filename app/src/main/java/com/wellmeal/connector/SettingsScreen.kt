@@ -1,20 +1,26 @@
 package com.wellmeal.connector
 
 import android.app.Activity
+import android.app.TimePickerDialog
 import android.content.Context
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -24,11 +30,16 @@ import androidx.health.connect.client.feature.ExperimentalPersonalHealthRecordAp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import java.io.File
+import java.time.LocalTime
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 @OptIn(ExperimentalPersonalHealthRecordApi::class)
 @Composable
 fun SettingsScreen(
     context: Context,
+    syncSettings: SyncSettings,
+    onSyncSettingsChanged: (SyncSettings) -> Unit,
     authManager: MicrosoftAuthManager,
     oneDriveUploader: OneDriveUploader,
     personalHealthRecordAvailable: Boolean,
@@ -63,6 +74,7 @@ fun SettingsScreen(
     scope: CoroutineScope
 ) {
     val currentUser = authManager.currentUser
+    val timeFormatter = DateTimeFormatter.ofPattern("HH:mm", Locale.US)
 
     Column(
         modifier = Modifier
@@ -79,7 +91,7 @@ fun SettingsScreen(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Placeholder User Settings Section
+        // Automatic Sync Settings Card
         Card(
             modifier = Modifier.fillMaxWidth()
         ) {
@@ -87,17 +99,178 @@ fun SettingsScreen(
                 modifier = Modifier.padding(16.dp)
             ) {
                 Text(
-                    text = "Sync Settings",
+                    text = "Automatic Sync",
                     style = MaterialTheme.typography.titleMedium
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Automatic Sync Switch
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Automatic Sync",
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                    Switch(
+                        checked = syncSettings.automaticSyncEnabled,
+                        onCheckedChange = { isChecked ->
+                            onSyncSettingsChanged(
+                                syncSettings.copy(automaticSyncEnabled = isChecked).normalized()
+                            )
+                        }
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Sync Frequency Chips
+                Text(
+                    text = "Sync Frequency",
+                    style = MaterialTheme.typography.titleSmall
                 )
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                Text("Automatic sync: Coming soon")
-                Spacer(modifier = Modifier.height(4.dp))
-                Text("Sync schedule: Coming soon")
-                Spacer(modifier = Modifier.height(4.dp))
-                Text("Network preference: Coming soon")
+                val currentCount = syncSettings.syncTimes.size
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    FilterChip(
+                        selected = currentCount == 1,
+                        onClick = {
+                            val newTimes = updateSyncTimeCount(1, syncSettings.syncTimes)
+                            onSyncSettingsChanged(syncSettings.copy(syncTimes = newTimes).normalized())
+                        },
+                        label = { Text("Once daily") }
+                    )
+
+                    FilterChip(
+                        selected = currentCount == 2,
+                        onClick = {
+                            val newTimes = updateSyncTimeCount(2, syncSettings.syncTimes)
+                            onSyncSettingsChanged(syncSettings.copy(syncTimes = newTimes).normalized())
+                        },
+                        label = { Text("Twice daily") }
+                    )
+
+                    FilterChip(
+                        selected = currentCount == 3,
+                        onClick = {
+                            val newTimes = updateSyncTimeCount(3, syncSettings.syncTimes)
+                            onSyncSettingsChanged(syncSettings.copy(syncTimes = newTimes).normalized())
+                        },
+                        label = { Text("3 times daily") }
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Configured Sync Times Selectors
+                Text(
+                    text = "Sync Times",
+                    style = MaterialTheme.typography.titleSmall
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                syncSettings.syncTimes.forEachIndexed { index, time ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Time ${index + 1}: ${time.format(timeFormatter)}")
+
+                        OutlinedButton(
+                            onClick = {
+                                TimePickerDialog(
+                                    context,
+                                    { _, hourOfDay, minute ->
+                                        val newTime = LocalTime.of(hourOfDay, minute)
+                                        val updatedTimes = syncSettings.syncTimes.toMutableList()
+                                        updatedTimes[index] = newTime
+
+                                        // Prevent duplicates
+                                        if (updatedTimes.distinct().size == updatedTimes.size) {
+                                            onSyncSettingsChanged(
+                                                syncSettings.copy(syncTimes = updatedTimes).normalized()
+                                            )
+                                        }
+                                    },
+                                    time.hour,
+                                    time.minute,
+                                    true
+                                ).show()
+                            }
+                        ) {
+                            Text("Edit Time")
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(4.dp))
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Network Preference
+                Text(
+                    text = "Network Preference",
+                    style = MaterialTheme.typography.titleSmall
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Sync on Wi-Fi only")
+                    Switch(
+                        checked = syncSettings.wifiOnly,
+                        onCheckedChange = { isChecked ->
+                            onSyncSettingsChanged(
+                                syncSettings.copy(wifiOnly = isChecked).normalized()
+                            )
+                        }
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Battery Preference
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Avoid syncing when battery is low",
+                        modifier = Modifier.weight(1f)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Switch(
+                        checked = syncSettings.avoidLowBattery,
+                        onCheckedChange = { isChecked ->
+                            onSyncSettingsChanged(
+                                syncSettings.copy(avoidLowBattery = isChecked).normalized()
+                            )
+                        }
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // System conditions note
+                Text(
+                    text = "Scheduled sync times are approximate and may run later depending on Android system conditions.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
 
@@ -421,4 +594,34 @@ fun SettingsScreen(
             Text(it)
         }
     }
+}
+
+/**
+ * Updates sync time count while preserving existing times where possible.
+ */
+private fun updateSyncTimeCount(targetCount: Int, currentTimes: List<LocalTime>): List<LocalTime> {
+    val defaultTimes = when (targetCount) {
+        1 -> listOf(LocalTime.of(8, 0))
+        2 -> listOf(LocalTime.of(8, 0), LocalTime.of(20, 0))
+        else -> listOf(LocalTime.of(8, 0), LocalTime.of(14, 0), LocalTime.of(20, 0))
+    }
+
+    if (currentTimes.isEmpty()) return defaultTimes
+
+    val result = mutableListOf<LocalTime>()
+    for (i in 0 until targetCount) {
+        if (i < currentTimes.size) {
+            result.add(currentTimes[i])
+        } else {
+            val candidate = defaultTimes[i]
+            if (!result.contains(candidate)) {
+                result.add(candidate)
+            } else {
+                val fallback = defaultTimes.firstOrNull { !result.contains(it) }
+                    ?: LocalTime.of((candidate.hour + 2) % 24, candidate.minute)
+                result.add(fallback)
+            }
+        }
+    }
+    return result.distinct().sorted()
 }

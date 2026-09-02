@@ -251,6 +251,14 @@ fun HealthConnectScreen() {
         SyncHistoryStore(context)
     }
 
+    val syncSettingsStore = remember {
+        SyncSettingsStore(context)
+    }
+
+    var syncSettings by remember {
+        mutableStateOf(syncSettingsStore.load())
+    }
+
     val syncCoordinator = remember {
         SyncCoordinator(
             context = context,
@@ -396,6 +404,11 @@ fun HealthConnectScreen() {
             composable(Screen.Settings.route) {
                 SettingsScreen(
                     context = context,
+                    syncSettings = syncSettings,
+                    onSyncSettingsChanged = { updatedSettings ->
+                        syncSettings = updatedSettings
+                        syncSettingsStore.save(updatedSettings)
+                    },
                     authManager = authManager,
                     oneDriveUploader = oneDriveUploader,
                     personalHealthRecordAvailable = personalHealthRecordAvailable,
