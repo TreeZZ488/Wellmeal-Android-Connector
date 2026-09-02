@@ -17,6 +17,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -277,6 +279,8 @@ fun HealthConnectScreen() {
         mutableStateOf<String?>(null)
     }
 
+    val currentUser = authManager.currentUser
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -288,12 +292,153 @@ fun HealthConnectScreen() {
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
 
+        // =================================-------------------------------
+        // HOME UI SECTION
+        // =================================-------------------------------
         Text(
             text = stringResource(R.string.app_name),
-            style = MaterialTheme.typography.headlineSmall
+            style = MaterialTheme.typography.headlineMedium
         )
 
-        Spacer(modifier = Modifier.height(20.dp))
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Connection Status Card
+        Card(
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp)
+            ) {
+                Text(
+                    text = "Connection Status",
+                    style = MaterialTheme.typography.titleMedium
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                val hcStatus = if (fitnessAllGranted) {
+                    "Connected"
+                } else {
+                    "Needs permission"
+                }
+                Text("Health Connect: $hcStatus")
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                val msStatus = if (currentUser != null) {
+                    "Connected (${currentUser.username})"
+                } else {
+                    "Not connected"
+                }
+                Text("Microsoft Account: $msStatus")
+            }
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // Sync Card
+        Card(
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp)
+            ) {
+                Text(
+                    text = "Sync",
+                    style = MaterialTheme.typography.titleMedium
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Button(
+                    enabled = authManager.currentUser != null && fitnessAllGranted && !isSyncing,
+                    onClick = {
+                        scope.launch {
+                            isSyncing = true
+                            lastSyncResult = null
+                            try {
+                                val result = syncCoordinator.performSync()
+                                lastSyncResult = result
+                            } catch (e: Exception) {
+                                lastSyncResult = SyncResult(
+                                    date = java.time.LocalDate.now().minusDays(1),
+                                    dailyUploaded = false,
+                                    profileStatus = ProfileSyncStatus.SKIPPED,
+                                    error = e.message ?: "Unknown sync error"
+                                )
+                            } finally {
+                                isSyncing = false
+                            }
+                        }
+                    }
+                ) {
+                    Text("Sync Now")
+                }
+
+                if (isSyncing) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("Syncing...")
+                } else {
+                    lastSyncResult?.let { result ->
+                        Spacer(modifier = Modifier.height(8.dp))
+                        val resultMessage = when {
+                            result.error != null -> {
+                                "Sync failed\nError: ${result.error}"
+                            }
+                            result.profileStatus == ProfileSyncStatus.FAILED -> {
+                                "Sync completed with warnings\nDaily: ${result.date}\nProfile: failed"
+                            }
+                            else -> {
+                                "Sync successful\nDaily: ${result.date}\nProfile: ${result.profileStatus.name.lowercase()}"
+                            }
+                        }
+                        Text(resultMessage)
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // Medical Profile Summary Card
+        Card(
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp)
+            ) {
+                Text(
+                    text = "Medical Profile Summary",
+                    style = MaterialTheme.typography.titleMedium
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                val allergyCount = healthProfile?.allergies?.size ?: 0
+                val medicationCount = healthProfile?.medications?.size ?: 0
+                val dietaryCount = dietaryRestrictions.size
+
+                Text("Allergies: $allergyCount")
+                Text("Medications: $medicationCount")
+                Text("Dietary Restrictions: $dietaryCount")
+            }
+        }
+
+        Spacer(modifier = Modifier.height(32.dp))
+
+        HorizontalDivider(modifier = Modifier.fillMaxWidth())
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        // =================================-------------------------------
+        // DEVELOPER TOOLS SECTION
+        // =================================-------------------------------
+        Text(
+            text = "Developer Tools",
+            style = MaterialTheme.typography.titleLarge
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
 
         Text("Health Connect: Available")
 
@@ -317,9 +462,9 @@ fun HealthConnectScreen() {
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        val currentUser = authManager.currentUser
+        val devCurrentUser = authManager.currentUser
 
-        if (currentUser == null) {
+        if (devCurrentUser == null) {
 
             Text("Status: Not signed in")
 
@@ -338,7 +483,7 @@ fun HealthConnectScreen() {
 
         } else {
 
-            Text("Signed in: ${currentUser.username}")
+            Text("Signed in: ${devCurrentUser.username}")
 
             Spacer(modifier = Modifier.height(12.dp))
 
