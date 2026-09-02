@@ -247,13 +247,18 @@ fun HealthConnectScreen() {
         OneDriveUploader()
     }
 
+    val syncHistoryStore = remember {
+        SyncHistoryStore(context)
+    }
+
     val syncCoordinator = remember {
         SyncCoordinator(
             context = context,
             healthConnectRepository = repository,
             healthJsonExporter = jsonExporter,
             microsoftAuthManager = authManager,
-            oneDriveUploader = oneDriveUploader
+            oneDriveUploader = oneDriveUploader,
+            syncHistoryStore = syncHistoryStore
         )
     }
 
@@ -335,6 +340,7 @@ fun HealthConnectScreen() {
                     lastSyncResult = lastSyncResult,
                     healthProfile = healthProfile,
                     dietaryRestrictions = dietaryRestrictions,
+                    syncHistoryStore = syncHistoryStore,
                     onSyncNow = {
                         scope.launch {
                             isSyncing = true
@@ -382,7 +388,9 @@ fun HealthConnectScreen() {
             }
 
             composable(Screen.History.route) {
-                HistoryScreen()
+                HistoryScreen(
+                    syncHistoryStore = syncHistoryStore
+                )
             }
 
             composable(Screen.Settings.route) {

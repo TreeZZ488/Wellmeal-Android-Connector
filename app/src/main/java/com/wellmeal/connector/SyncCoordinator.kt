@@ -5,6 +5,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.time.Instant
 import java.time.LocalDate
 import kotlin.coroutines.resume
 
@@ -27,18 +28,30 @@ class SyncCoordinator(
     private val healthConnectRepository: HealthConnectRepository,
     private val healthJsonExporter: HealthJsonExporter,
     private val microsoftAuthManager: MicrosoftAuthManager,
-    private val oneDriveUploader: OneDriveUploader
+    private val oneDriveUploader: OneDriveUploader,
+    private val syncHistoryStore: SyncHistoryStore = SyncHistoryStore(context)
 ) {
 
     /**
-     * Executes one complete manual sync pipeline off the main thread.
+     * Executes one complete sync pipeline off the main thread, persisting exactly one history entry.
      */
-    suspend fun performSync(): SyncResult = withContext(Dispatchers.IO) {
+    suspend fun performSync(
+        trigger: SyncTrigger = SyncTrigger.MANUAL
+    ): SyncResult = withContext(Dispatchers.IO) {
+        val result = executeSync()
+        saveSyncHistory(result, trigger)
+        result
+    }
+
+    /**
+     * Executes actual sync steps.
+     */
+    private suspend fun executeSync(): SyncResult {
         // 1. Read yesterday's aggregated health data
         val snapshot = try {
             healthConnectRepository.getYesterdaySummary()
         } catch (e: Exception) {
-            return@withContext SyncResult(
+            return SyncResult(
                 date = LocalDate.now().minusDays(1),
                 dailyUploaded = false,
                 profileStatus = ProfileSyncStatus.SKIPPED,
@@ -50,7 +63,7 @@ class SyncCoordinator(
         val dailyFile = try {
             healthJsonExporter.exportDailyHealth(snapshot)
         } catch (e: Exception) {
-            return@withContext SyncResult(
+            return SyncResult(
                 date = snapshot.date,
                 dailyUploaded = false,
                 profileStatus = ProfileSyncStatus.SKIPPED,
@@ -61,7 +74,7 @@ class SyncCoordinator(
         // 3. Acquire Microsoft Graph access token silently
         val tokenResult = acquireToken()
         val accessToken = tokenResult.getOrElse {
-            return@withContext SyncResult(
+            return SyncResult(
                 date = snapshot.date,
                 dailyUploaded = false,
                 profileStatus = ProfileSyncStatus.SKIPPED,
@@ -72,7 +85,7 @@ class SyncCoordinator(
         // 4. Ensure the 'daily' folder exists in OneDrive App Folder
         val folderResult = oneDriveUploader.ensureFolder(accessToken, "daily")
         if (folderResult.isFailure) {
-            return@withContext SyncResult(
+            return SyncResult(
                 date = snapshot.date,
                 dailyUploaded = false,
                 profileStatus = ProfileSyncStatus.SKIPPED,
@@ -89,7 +102,7 @@ class SyncCoordinator(
         )
 
         if (dailyUploadResult.isFailure) {
-            return@withContext SyncResult(
+            return SyncResult(
                 date = snapshot.date,
                 dailyUploaded = false,
                 profileStatus = ProfileSyncStatus.SKIPPED,
@@ -117,12 +130,40 @@ class SyncCoordinator(
             Pair(ProfileSyncStatus.SKIPPED, null)
         }
 
-        SyncResult(
+        return SyncResult(
             date = snapshot.date,
             dailyUploaded = true,
             profileStatus = profileStatus,
             profileError = profileError
         )
+    }
+
+    /**
+     * Converts SyncResult into SyncHistoryEntry and appends it to local storage.
+     */
+    private fun saveSyncHistory(result: SyncResult, trigger: SyncTrigger) {
+        try {
+            val outcome = when {
+                !result.dailyUploaded || result.error != null -> SyncOutcome.FAILED
+                result.profileStatus == ProfileSyncStatus.FAILED -> SyncOutcome.PARTIAL
+                else -> SyncOutcome.SUCCESS
+            }
+
+            val entry = SyncHistoryEntry(
+                completedAt = Instant.now().toString(),
+                date = result.date,
+                trigger = trigger,
+                outcome = outcome,
+                dailyUploaded = result.dailyUploaded,
+                profileStatus = result.profileStatus,
+                error = result.error,
+                profileError = result.profileError
+            )
+
+            syncHistoryStore.appendEntry(entry)
+        } catch (_: Exception) {
+            // Do not make an otherwise successful sync fail merely because writing local history file failed
+        }
     }
 
     /**

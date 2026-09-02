@@ -13,12 +13,21 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 @Composable
-fun HistoryScreen() {
+fun HistoryScreen(
+    syncHistoryStore: SyncHistoryStore
+) {
+    val historyEntries = remember { syncHistoryStore.loadHistory() }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -34,17 +43,84 @@ fun HistoryScreen() {
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        Card(
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(
-                modifier = Modifier.padding(16.dp)
+        if (historyEntries.isEmpty()) {
+            Card(
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Text(
-                    text = "Sync history will appear here.",
-                    style = MaterialTheme.typography.bodyLarge
-                )
+                Column(
+                    modifier = Modifier.padding(16.dp)
+                ) {
+                    Text(
+                        text = "No sync history yet.",
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                }
+            }
+        } else {
+            historyEntries.forEach { entry ->
+                Card(
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp)
+                    ) {
+                        val outcomeText = when (entry.outcome) {
+                            SyncOutcome.SUCCESS -> "Success"
+                            SyncOutcome.PARTIAL -> "Partial"
+                            SyncOutcome.FAILED -> "Failed"
+                        }
+
+                        Text(
+                            text = outcomeText,
+                            style = MaterialTheme.typography.titleMedium,
+                            color = when (entry.outcome) {
+                                SyncOutcome.SUCCESS -> MaterialTheme.colorScheme.primary
+                                SyncOutcome.PARTIAL -> MaterialTheme.colorScheme.tertiary
+                                SyncOutcome.FAILED -> MaterialTheme.colorScheme.error
+                            }
+                        )
+
+                        Spacer(modifier = Modifier.height(4.dp))
+
+                        Text(
+                            text = formatTimestamp(entry.completedAt),
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        Text("Daily data: ${entry.date}")
+                        Text("Daily upload: ${if (entry.dailyUploaded) "Uploaded" else "Failed"}")
+                        Text("Profile: ${entry.profileStatus.name.lowercase().replaceFirstChar { it.uppercase() }}")
+                        Text("Trigger: ${entry.trigger.name.lowercase().replaceFirstChar { it.uppercase() }}")
+
+                        if (entry.outcome != SyncOutcome.SUCCESS) {
+                            val errorText = entry.error ?: entry.profileError
+                            if (!errorText.isNullOrBlank()) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    text = "Error: $errorText",
+                                    color = MaterialTheme.colorScheme.error,
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
             }
         }
+    }
+}
+
+private fun formatTimestamp(completedAt: String): String {
+    return try {
+        val instant = Instant.parse(completedAt)
+        val zone = ZoneId.systemDefault()
+        val formatter = DateTimeFormatter.ofPattern("MMM d, yyyy HH:mm", Locale.US)
+        formatter.format(instant.atZone(zone))
+    } catch (_: Exception) {
+        completedAt
     }
 }

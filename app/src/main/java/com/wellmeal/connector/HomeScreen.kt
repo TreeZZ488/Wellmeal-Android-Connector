@@ -14,6 +14,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -27,9 +28,13 @@ fun HomeScreen(
     lastSyncResult: SyncResult?,
     healthProfile: HealthProfile?,
     dietaryRestrictions: List<String>,
+    syncHistoryStore: SyncHistoryStore,
     onSyncNow: () -> Unit
 ) {
     val currentUser = authManager.currentUser
+    val latestHistoryEntry = remember(lastSyncResult, isSyncing) {
+        syncHistoryStore.getLatestEntry()
+    }
 
     Column(
         modifier = Modifier
@@ -106,8 +111,9 @@ fun HomeScreen(
                     Spacer(modifier = Modifier.height(8.dp))
                     Text("Syncing...")
                 } else {
-                    lastSyncResult?.let { result ->
+                    if (lastSyncResult != null) {
                         Spacer(modifier = Modifier.height(8.dp))
+                        val result = lastSyncResult
                         val resultMessage = when {
                             result.error != null -> {
                                 "Sync failed\nError: ${result.error}"
@@ -117,6 +123,21 @@ fun HomeScreen(
                             }
                             else -> {
                                 "Sync successful\nDaily: ${result.date}\nProfile: ${result.profileStatus.name.lowercase()}"
+                            }
+                        }
+                        Text(resultMessage)
+                    } else if (latestHistoryEntry != null) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        val entry = latestHistoryEntry
+                        val resultMessage = when (entry.outcome) {
+                            SyncOutcome.FAILED -> {
+                                "Sync failed\nDaily: ${entry.date}\nError: ${entry.error ?: "Unknown error"}"
+                            }
+                            SyncOutcome.PARTIAL -> {
+                                "Sync completed with warnings\nDaily: ${entry.date}\nProfile: failed"
+                            }
+                            SyncOutcome.SUCCESS -> {
+                                "Sync successful\nDaily: ${entry.date}\nProfile: ${entry.profileStatus.name.lowercase()}"
                             }
                         }
                         Text(resultMessage)
