@@ -1,26 +1,25 @@
 package com.wellmeal.connector
 
-import android.app.Activity
 import android.os.Bundle
-import java.io.File
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -31,6 +30,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -43,6 +43,12 @@ import androidx.health.connect.client.records.ExerciseSessionRecord
 import androidx.health.connect.client.records.HeartRateRecord
 import androidx.health.connect.client.records.SleepSessionRecord
 import androidx.health.connect.client.records.StepsRecord
+import androidx.navigation.NavDestination.Companion.hierarchy
+import androidx.navigation.NavGraph.Companion.findStartDestination
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
+import androidx.navigation.compose.rememberNavController
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -56,6 +62,13 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+}
+
+enum class Screen(val route: String, val title: String, val icon: ImageVector) {
+    Home("home", "Home", Icons.Default.Home),
+    MedicalProfile("medical_profile", "Medical Profile", Icons.Default.Person),
+    History("history", "History", Icons.Default.DateRange),
+    Settings("settings", "Settings", Icons.Default.Settings)
 }
 
 @OptIn(ExperimentalPersonalHealthRecordApi::class)
@@ -222,10 +235,6 @@ fun HealthConnectScreen() {
         )
     }
 
-    var dietaryRestrictionInput by remember {
-        mutableStateOf("")
-    }
-
     val profileJsonExporter = remember {
         HealthProfileJsonExporter(context)
     }
@@ -279,80 +288,54 @@ fun HealthConnectScreen() {
         mutableStateOf<String?>(null)
     }
 
-    val currentUser = authManager.currentUser
+    val navController = rememberNavController()
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(
-                rememberScrollState()
-            )
-            .padding(24.dp),
-        verticalArrangement = Arrangement.Top,
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
+    Scaffold(
+        bottomBar = {
+            NavigationBar {
+                val navBackStackEntry by navController.currentBackStackEntryAsState()
+                val currentDestination = navBackStackEntry?.destination
 
-        // =================================-------------------------------
-        // HOME UI SECTION
-        // =================================-------------------------------
-        Text(
-            text = stringResource(R.string.app_name),
-            style = MaterialTheme.typography.headlineMedium
-        )
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // Connection Status Card
-        Card(
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(
-                modifier = Modifier.padding(16.dp)
-            ) {
-                Text(
-                    text = "Connection Status",
-                    style = MaterialTheme.typography.titleMedium
+                val screens = listOf(
+                    Screen.Home,
+                    Screen.MedicalProfile,
+                    Screen.History,
+                    Screen.Settings
                 )
 
-                Spacer(modifier = Modifier.height(8.dp))
-
-                val hcStatus = if (fitnessAllGranted) {
-                    "Connected"
-                } else {
-                    "Needs permission"
+                screens.forEach { screen ->
+                    NavigationBarItem(
+                        icon = { Icon(screen.icon, contentDescription = screen.title) },
+                        label = { Text(screen.title) },
+                        selected = currentDestination?.hierarchy?.any { it.route == screen.route } == true,
+                        onClick = {
+                            navController.navigate(screen.route) {
+                                popUpTo(navController.graph.findStartDestination().id) {
+                                    saveState = true
+                                }
+                                launchSingleTop = true
+                                restoreState = true
+                            }
+                        }
+                    )
                 }
-                Text("Health Connect: $hcStatus")
-
-                Spacer(modifier = Modifier.height(4.dp))
-
-                val msStatus = if (currentUser != null) {
-                    "Connected (${currentUser.username})"
-                } else {
-                    "Not connected"
-                }
-                Text("Microsoft Account: $msStatus")
             }
         }
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        // Sync Card
-        Card(
-            modifier = Modifier.fillMaxWidth()
+    ) { innerPadding ->
+        NavHost(
+            navController = navController,
+            startDestination = Screen.Home.route,
+            modifier = Modifier.padding(innerPadding)
         ) {
-            Column(
-                modifier = Modifier.padding(16.dp)
-            ) {
-                Text(
-                    text = "Sync",
-                    style = MaterialTheme.typography.titleMedium
-                )
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                Button(
-                    enabled = authManager.currentUser != null && fitnessAllGranted && !isSyncing,
-                    onClick = {
+            composable(Screen.Home.route) {
+                HomeScreen(
+                    fitnessAllGranted = fitnessAllGranted,
+                    authManager = authManager,
+                    isSyncing = isSyncing,
+                    lastSyncResult = lastSyncResult,
+                    healthProfile = healthProfile,
+                    dietaryRestrictions = dietaryRestrictions,
+                    onSyncNow = {
                         scope.launch {
                             isSyncing = true
                             lastSyncResult = null
@@ -371,708 +354,78 @@ fun HealthConnectScreen() {
                             }
                         }
                     }
-                ) {
-                    Text("Sync Now")
-                }
-
-                if (isSyncing) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text("Syncing...")
-                } else {
-                    lastSyncResult?.let { result ->
-                        Spacer(modifier = Modifier.height(8.dp))
-                        val resultMessage = when {
-                            result.error != null -> {
-                                "Sync failed\nError: ${result.error}"
-                            }
-                            result.profileStatus == ProfileSyncStatus.FAILED -> {
-                                "Sync completed with warnings\nDaily: ${result.date}\nProfile: failed"
-                            }
-                            else -> {
-                                "Sync successful\nDaily: ${result.date}\nProfile: ${result.profileStatus.name.lowercase()}"
-                            }
-                        }
-                        Text(resultMessage)
-                    }
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        // Medical Profile Summary Card
-        Card(
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(
-                modifier = Modifier.padding(16.dp)
-            ) {
-                Text(
-                    text = "Medical Profile Summary",
-                    style = MaterialTheme.typography.titleMedium
                 )
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                val allergyCount = healthProfile?.allergies?.size ?: 0
-                val medicationCount = healthProfile?.medications?.size ?: 0
-                val dietaryCount = dietaryRestrictions.size
-
-                Text("Allergies: $allergyCount")
-                Text("Medications: $medicationCount")
-                Text("Dietary Restrictions: $dietaryCount")
-            }
-        }
-
-        Spacer(modifier = Modifier.height(32.dp))
-
-        HorizontalDivider(modifier = Modifier.fillMaxWidth())
-
-        Spacer(modifier = Modifier.height(24.dp))
-
-        // =================================-------------------------------
-        // DEVELOPER TOOLS SECTION
-        // =================================-------------------------------
-        Text(
-            text = "Developer Tools",
-            style = MaterialTheme.typography.titleLarge
-        )
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Text("Health Connect: Available")
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        Text(
-            if (personalHealthRecordAvailable) {
-                "Personal Health Record: Available"
-            } else {
-                "Personal Health Record: Unavailable"
-            }
-        )
-
-        // Microsoft Account section.
-        Spacer(modifier = Modifier.height(20.dp))
-
-        Text(
-            text = "Microsoft Account",
-            style = MaterialTheme.typography.titleMedium
-        )
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        val devCurrentUser = authManager.currentUser
-
-        if (devCurrentUser == null) {
-
-            Text("Status: Not signed in")
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            Button(
-                onClick = {
-                    val activity = context as? Activity
-                    if (activity != null) {
-                        authManager.signIn(activity)
-                    }
-                }
-            ) {
-                Text("Sign in with Microsoft")
             }
 
-        } else {
-
-            Text("Signed in: ${devCurrentUser.username}")
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            Button(
-                onClick = {
-                    authManager.signOut()
-                }
-            ) {
-                Text("Sign out")
-            }
-        }
-
-        authManager.authError?.let { error ->
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Text("Auth error: $error")
-        }
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        Button(
-            enabled = authManager.currentUser != null,
-            onClick = {
-
-                val profileFile = File(context.filesDir, "exports/profile.json")
-
-                if (!profileFile.exists()) {
-                    uploadResult = "profile.json not found"
-                    return@Button
-                }
-
-                uploadResult = "Uploading profile.json..."
-
-                authManager.acquireTokenSilent(
-                    scopes = listOf("Files.ReadWrite.AppFolder"),
-                    onSuccess = { authResult ->
-                        scope.launch {
-                            val result = oneDriveUploader.uploadToAppFolder(
-                                accessToken = authResult.accessToken,
-                                file = profileFile,
-                                remoteFilename = "profile.json"
-                            )
-
-                            uploadResult = if (result.isSuccess) {
-                                "OneDrive upload successful"
-                            } else {
-                                "Upload failed: ${result.exceptionOrNull()?.message}"
-                            }
+            composable(Screen.MedicalProfile.route) {
+                MedicalProfileScreen(
+                    healthProfile = healthProfile,
+                    dietaryRestrictions = dietaryRestrictions,
+                    onAddDietaryRestriction = { newRestriction ->
+                        val alreadyExists = dietaryRestrictions.any {
+                            it.equals(newRestriction, ignoreCase = true)
+                        }
+                        if (!alreadyExists) {
+                            val updated = (dietaryRestrictions + newRestriction).sortedBy { it.lowercase() }
+                            dietaryRestrictions = updated
+                            dietaryRestrictionStore.save(updated)
+                            healthProfile = healthProfile?.copy(dietaryRestrictions = updated)
                         }
                     },
-                    onError = { exception ->
-                        uploadResult = "Token error: ${exception.message}"
+                    onRemoveDietaryRestriction = { restriction ->
+                        val updated = dietaryRestrictions.filterNot { it == restriction }
+                        dietaryRestrictions = updated
+                        dietaryRestrictionStore.save(updated)
+                        healthProfile = healthProfile?.copy(dietaryRestrictions = updated)
                     }
                 )
             }
-        ) {
-            Text("Upload Profile to OneDrive")
-        }
 
-        uploadResult?.let { resultText ->
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Text(resultText)
-        }
-
-        // Sync section.
-        Spacer(modifier = Modifier.height(24.dp))
-
-        Text(
-            text = "Sync",
-            style = MaterialTheme.typography.titleMedium
-        )
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        Button(
-            enabled = authManager.currentUser != null && fitnessAllGranted && !isSyncing,
-            onClick = {
-                scope.launch {
-                    isSyncing = true
-                    lastSyncResult = null
-                    try {
-                        val result = syncCoordinator.performSync()
-                        lastSyncResult = result
-                    } catch (e: Exception) {
-                        lastSyncResult = SyncResult(
-                            date = java.time.LocalDate.now().minusDays(1),
-                            dailyUploaded = false,
-                            profileStatus = ProfileSyncStatus.SKIPPED,
-                            error = e.message ?: "Unknown sync error"
-                        )
-                    } finally {
-                        isSyncing = false
-                    }
-                }
+            composable(Screen.History.route) {
+                HistoryScreen()
             }
-        ) {
-            Text("Sync Now")
-        }
 
-        if (isSyncing) {
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Text("Syncing...")
-
-        } else {
-
-            lastSyncResult?.let { result ->
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                val resultMessage = when {
-                    result.error != null -> {
-                        "Sync failed\nError: ${result.error}"
-                    }
-                    result.profileStatus == ProfileSyncStatus.FAILED -> {
-                        "Sync completed with warnings\nDaily: ${result.date}\nProfile: failed"
-                    }
-                    else -> {
-                        "Sync successful\nDaily: ${result.date}\nProfile: ${result.profileStatus.name.lowercase()}"
-                    }
-                }
-
-                Text(resultMessage)
-            }
-        }
-
-        // Fitness permission section.
-        Spacer(modifier = Modifier.height(20.dp))
-
-        Text(
-            text = "Fitness Permissions",
-            style = MaterialTheme.typography.titleMedium
-        )
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        Text(
-            if (fitnessAllGranted) {
-                "Health permissions: Granted"
-            } else {
-                "Health permissions: Not granted"
-            }
-        )
-
-        Text(
-            "Granted: $fitnessGrantedCount / ${fitnessPermissions.size}"
-        )
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        Button(
-            onClick = {
-                fitnessPermissionLauncher.launch(
-                    fitnessPermissions
+            composable(Screen.Settings.route) {
+                SettingsScreen(
+                    context = context,
+                    authManager = authManager,
+                    oneDriveUploader = oneDriveUploader,
+                    personalHealthRecordAvailable = personalHealthRecordAvailable,
+                    fitnessAllGranted = fitnessAllGranted,
+                    fitnessGrantedCount = fitnessGrantedCount,
+                    fitnessPermissionsSize = fitnessPermissions.size,
+                    onLaunchFitnessPermission = {
+                        fitnessPermissionLauncher.launch(fitnessPermissions)
+                    },
+                    medicalAllGranted = medicalAllGranted,
+                    medicalGrantedCount = medicalGrantedCount,
+                    medicalPermissionsSize = medicalPermissions.size,
+                    onLaunchMedicalPermission = {
+                        medicalPermissionLauncher.launch(medicalPermissions)
+                    },
+                    medicalRepository = medicalRepository,
+                    medicalProfileParser = medicalProfileParser,
+                    healthProfile = healthProfile,
+                    onHealthProfileUpdated = { healthProfile = it },
+                    dietaryRestrictions = dietaryRestrictions,
+                    profileJsonExporter = profileJsonExporter,
+                    medicalResult = medicalResult,
+                    onMedicalResultUpdated = { medicalResult = it },
+                    uploadResult = uploadResult,
+                    onUploadResultUpdated = { uploadResult = it },
+                    repository = repository,
+                    jsonExporter = jsonExporter,
+                    snapshot = snapshot,
+                    onSnapshotUpdated = { snapshot = it },
+                    dataLoaded = dataLoaded,
+                    onDataLoadedUpdated = { dataLoaded = it },
+                    loadError = loadError,
+                    onLoadErrorUpdated = { loadError = it },
+                    exportResult = exportResult,
+                    onExportResultUpdated = { exportResult = it },
+                    scope = scope
                 )
             }
-        ) {
-            Text("Request Health Permissions")
-        }
-
-        // Optional medical profile permission section.
-        Spacer(modifier = Modifier.height(20.dp))
-
-        Text(
-            text = "Optional Medical Profile",
-            style = MaterialTheme.typography.titleMedium
-        )
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        Text(
-            if (medicalAllGranted) {
-                "Medical permissions: Granted"
-            } else {
-                "Medical permissions: Not granted"
-            }
-        )
-
-        Text(
-            "Granted: $medicalGrantedCount / ${medicalPermissions.size}"
-        )
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        Button(
-            enabled = personalHealthRecordAvailable,
-            onClick = {
-                medicalPermissionLauncher.launch(
-                    medicalPermissions
-                )
-            }
-        ) {
-            Text("Request Medical Permissions")
-        }
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        Button(
-            enabled =
-                personalHealthRecordAvailable &&
-                medicalAllGranted,
-            onClick = {
-
-                scope.launch {
-
-                    try {
-
-                        val allergies =
-                            medicalRepository.readAllergies()
-
-                        val medications =
-                            medicalRepository.readMedications()
-
-                        val profile =
-                            medicalProfileParser.parse(
-                                allergies = allergies,
-                                medications = medications,
-                                dietaryRestrictions =
-                                    dietaryRestrictions
-                            )
-
-                        healthProfile = profile
-
-                        val allergyNames =
-                            profile.allergies
-                                .joinToString(", ") {
-                                    it.name
-                                }
-                                .ifBlank {
-                                    "None"
-                                }
-
-                        val medicationNames =
-                            profile.medications
-                                .joinToString(", ") {
-                                    it.name
-                                }
-                                .ifBlank {
-                                    "None"
-                                }
-
-                        val dietaryRestrictionNames =
-                            profile.dietaryRestrictions
-                                .joinToString(", ")
-                                .ifBlank {
-                                    "None"
-                                }
-
-                        medicalResult =
-                            "Allergies: $allergyNames\n" +
-                            "Medications: $medicationNames\n" +
-                            "Dietary restrictions: $dietaryRestrictionNames"
-
-                    } catch (e: Exception) {
-
-                        medicalResult =
-                            "Medical read failed: ${
-                                e.message ?: "Unknown error"
-                            }"
-                    }
-                }
-            }
-        ) {
-            Text("Read Medical Profile")
-        }
-
-        medicalResult?.let {
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Text(it)
-        }
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        Button(
-            enabled = healthProfile != null,
-            onClick = {
-
-                val currentProfile =
-                    healthProfile?.copy(
-                        dietaryRestrictions =
-                            dietaryRestrictions
-                    )
-
-                if (currentProfile != null) {
-
-                    try {
-
-                        val file =
-                            profileJsonExporter.exportProfile(
-                                currentProfile
-                            )
-
-                        medicalResult =
-                            "Profile exported: ${file.name}"
-
-                    } catch (e: Exception) {
-
-                        medicalResult =
-                            "Profile export failed: ${
-                                e.message ?: "Unknown error"
-                            }"
-                    }
-                }
-            }
-        ) {
-            Text("Export Profile JSON")
-        }
-
-        // Dietary Restrictions UI section.
-        Spacer(modifier = Modifier.height(24.dp))
-
-        Text(
-            text = "Dietary Restrictions",
-            style = MaterialTheme.typography.titleMedium
-        )
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        Text(
-            "Add dietary restrictions that are not available from Health Connect."
-        )
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        OutlinedTextField(
-            value = dietaryRestrictionInput,
-            onValueChange = {
-                dietaryRestrictionInput = it
-            },
-            label = {
-                Text("Restriction")
-            },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth()
-        )
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        Button(
-            enabled =
-                dietaryRestrictionInput
-                    .trim()
-                    .isNotEmpty(),
-            onClick = {
-
-                val newRestriction =
-                    dietaryRestrictionInput.trim()
-
-                val alreadyExists =
-                    dietaryRestrictions.any {
-                        it.equals(
-                            newRestriction,
-                            ignoreCase = true
-                        )
-                    }
-
-                if (!alreadyExists) {
-
-                    val updatedRestrictions =
-                        (dietaryRestrictions +
-                            newRestriction)
-                            .sortedBy {
-                                it.lowercase()
-                            }
-
-                    dietaryRestrictions =
-                        updatedRestrictions
-
-                    dietaryRestrictionStore.save(
-                        updatedRestrictions
-                    )
-
-                    healthProfile =
-                        healthProfile?.copy(
-                            dietaryRestrictions =
-                                updatedRestrictions
-                        )
-                }
-
-                dietaryRestrictionInput = ""
-            }
-        ) {
-            Text("Add Restriction")
-        }
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        if (dietaryRestrictions.isEmpty()) {
-
-            Text("No dietary restrictions")
-
-        } else {
-
-            dietaryRestrictions.forEach { restriction ->
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement =
-                        Arrangement.SpaceBetween,
-                    verticalAlignment =
-                        Alignment.CenterVertically
-                ) {
-
-                    Text(restriction)
-
-                    Button(
-                        onClick = {
-
-                            val updatedRestrictions =
-                                dietaryRestrictions
-                                    .filterNot {
-                                        it == restriction
-                                    }
-
-                            dietaryRestrictions =
-                                updatedRestrictions
-
-                            dietaryRestrictionStore.save(
-                                updatedRestrictions
-                            )
-
-                            healthProfile =
-                                healthProfile?.copy(
-                                    dietaryRestrictions =
-                                        updatedRestrictions
-                                )
-                        }
-                    ) {
-                        Text("Remove")
-                    }
-                }
-
-                Spacer(
-                    modifier =
-                        Modifier.height(4.dp)
-                )
-            }
-        }
-
-        // Daily health summary section.
-        Spacer(modifier = Modifier.height(24.dp))
-
-        if (!dataLoaded) {
-
-            Text("Yesterday data: Not loaded")
-
-        } else {
-
-            val data = snapshot
-
-            if (loadError != null) {
-
-                Text("Error: $loadError")
-
-            } else {
-
-                Text(
-                    text = "Date: ${data?.date ?: "Unknown"}"
-                )
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                Text(
-                    "Steps: ${
-                        data?.steps?.toString()
-                            ?: "No data"
-                    }"
-                )
-
-                Text(
-                    "Average HR: ${
-                        data?.heartRateAverage
-                            ?.let { "$it bpm" }
-                            ?: "No data"
-                    }"
-                )
-
-                Text(
-                    "Minimum HR: ${
-                        data?.heartRateMinimum
-                            ?.let { "$it bpm" }
-                            ?: "No data"
-                    }"
-                )
-
-                Text(
-                    "Maximum HR: ${
-                        data?.heartRateMaximum
-                            ?.let { "$it bpm" }
-                            ?: "No data"
-                    }"
-                )
-
-                Text(
-                    "Sleep: ${
-                        data?.sleepMinutes
-                            ?.let { "$it min" }
-                            ?: "No data"
-                    }"
-                )
-
-                Text(
-                    "Exercise: ${
-                        data?.exerciseMinutes
-                            ?.let { "$it min" }
-                            ?: "No data"
-                    }"
-                )
-            }
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // Read yesterday's aggregated Health Connect data.
-        Button(
-            enabled = fitnessAllGranted,
-            onClick = {
-
-                scope.launch {
-
-                    loadError = null
-                    exportResult = null
-
-                    try {
-
-                        snapshot =
-                            repository
-                                .getYesterdaySummary()
-
-                    } catch (e: Exception) {
-
-                        snapshot = null
-
-                        loadError =
-                            e.message ?: "Unknown error"
-                    }
-
-                    dataLoaded = true
-                }
-            }
-        ) {
-            Text("Read Yesterday Summary")
-        }
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        // Export the loaded snapshot to JSON.
-        Button(
-            enabled = snapshot != null,
-            onClick = {
-
-                val currentSnapshot = snapshot
-
-                if (currentSnapshot != null) {
-
-                    try {
-
-                        val file =
-                            jsonExporter.exportDailyHealth(
-                                snapshot = currentSnapshot
-                            )
-
-                        exportResult =
-                            "Exported: ${file.name}"
-
-                    } catch (e: Exception) {
-
-                        exportResult =
-                            "Export failed: ${
-                                e.message ?: "Unknown error"
-                            }"
-                    }
-                }
-            }
-        ) {
-            Text("Export JSON")
-        }
-
-        exportResult?.let {
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            Text(it)
         }
     }
 }
