@@ -18,6 +18,7 @@ enum class ProfileSyncStatus {
 data class SyncResult(
     val date: LocalDate,
     val dailyUploaded: Boolean,
+    val latestUploaded: Boolean,
     val profileStatus: ProfileSyncStatus,
     val profileError: String? = null,
     val error: String? = null
@@ -54,6 +55,7 @@ class SyncCoordinator(
             return SyncResult(
                 date = LocalDate.now().minusDays(1),
                 dailyUploaded = false,
+                latestUploaded = false,
                 profileStatus = ProfileSyncStatus.SKIPPED,
                 error = "Failed to read Health Connect data: ${e.message}"
             )
@@ -66,6 +68,7 @@ class SyncCoordinator(
             return SyncResult(
                 date = snapshot.date,
                 dailyUploaded = false,
+                latestUploaded = false,
                 profileStatus = ProfileSyncStatus.SKIPPED,
                 error = "Failed to export daily JSON locally: ${e.message}"
             )
@@ -77,6 +80,7 @@ class SyncCoordinator(
             return SyncResult(
                 date = snapshot.date,
                 dailyUploaded = false,
+                latestUploaded = false,
                 profileStatus = ProfileSyncStatus.SKIPPED,
                 error = "Token acquisition failed: ${it.message}"
             )
@@ -88,6 +92,7 @@ class SyncCoordinator(
             return SyncResult(
                 date = snapshot.date,
                 dailyUploaded = false,
+                latestUploaded = false,
                 profileStatus = ProfileSyncStatus.SKIPPED,
                 error = "AppFolder setup failed: ${folderResult.exceptionOrNull()?.message}"
             )
@@ -105,12 +110,30 @@ class SyncCoordinator(
             return SyncResult(
                 date = snapshot.date,
                 dailyUploaded = false,
+                latestUploaded = false,
                 profileStatus = ProfileSyncStatus.SKIPPED,
                 error = "Daily JSON upload failed: ${dailyUploadResult.exceptionOrNull()?.message}"
             )
         }
 
-        // 6. Check if profile.json exists locally and upload it if present
+        // 6. Upload exact same daily JSON to latest.json at root of App Folder
+        val latestUploadResult = oneDriveUploader.uploadToAppFolderPath(
+            accessToken = accessToken,
+            file = dailyFile,
+            relativePath = "latest.json"
+        )
+
+        if (latestUploadResult.isFailure) {
+            return SyncResult(
+                date = snapshot.date,
+                dailyUploaded = true,
+                latestUploaded = false,
+                profileStatus = ProfileSyncStatus.SKIPPED,
+                error = "Latest JSON upload failed: ${latestUploadResult.exceptionOrNull()?.message}"
+            )
+        }
+
+        // 7. Check if profile.json exists locally and upload it if present
         val profileFile = File(context.filesDir, "exports/profile.json")
         val (profileStatus, profileError) = if (profileFile.exists()) {
             val profileUploadResult = oneDriveUploader.uploadToAppFolderPath(
@@ -133,6 +156,7 @@ class SyncCoordinator(
         return SyncResult(
             date = snapshot.date,
             dailyUploaded = true,
+            latestUploaded = true,
             profileStatus = profileStatus,
             profileError = profileError
         )
@@ -144,7 +168,7 @@ class SyncCoordinator(
     private fun saveSyncHistory(result: SyncResult, trigger: SyncTrigger) {
         try {
             val outcome = when {
-                !result.dailyUploaded || result.error != null -> SyncOutcome.FAILED
+                !result.dailyUploaded || !result.latestUploaded || result.error != null -> SyncOutcome.FAILED
                 result.profileStatus == ProfileSyncStatus.FAILED -> SyncOutcome.PARTIAL
                 else -> SyncOutcome.SUCCESS
             }
@@ -155,6 +179,7 @@ class SyncCoordinator(
                 trigger = trigger,
                 outcome = outcome,
                 dailyUploaded = result.dailyUploaded,
+                latestUploaded = result.latestUploaded,
                 profileStatus = result.profileStatus,
                 error = result.error,
                 profileError = result.profileError

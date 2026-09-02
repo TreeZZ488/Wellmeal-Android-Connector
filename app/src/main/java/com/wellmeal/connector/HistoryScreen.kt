@@ -90,7 +90,8 @@ fun HistoryScreen(
                         Spacer(modifier = Modifier.height(8.dp))
 
                         Text("Daily data: ${entry.date}")
-                        Text("Daily upload: ${if (entry.dailyUploaded) "Uploaded" else "Failed"}")
+                        Text("Daily: ${if (entry.dailyUploaded) "Uploaded" else "Failed"}")
+                        Text("Latest: ${if (entry.latestUploaded) "Uploaded" else "Failed"}")
                         Text("Profile: ${entry.profileStatus.name.lowercase().replaceFirstChar { it.uppercase() }}")
                         Text("Trigger: ${entry.trigger.name.lowercase().replaceFirstChar { it.uppercase() }}")
 

@@ -422,6 +422,7 @@ fun HealthConnectScreen() {
                                 lastSyncResult = SyncResult(
                                     date = java.time.LocalDate.now().minusDays(1),
                                     dailyUploaded = false,
+                                    latestUploaded = false,
                                     profileStatus = ProfileSyncStatus.SKIPPED,
                                     error = e.message ?: "Unknown sync error"
                                 )

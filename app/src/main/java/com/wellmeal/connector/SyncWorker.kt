@@ -48,8 +48,8 @@ class SyncWorker(
                 trigger = SyncTrigger.AUTOMATIC
             )
 
-            // Interpret WorkManager result based on daily upload success
-            if (syncResult.dailyUploaded) {
+            // Interpret WorkManager result based on daily & latest upload success
+            if (syncResult.dailyUploaded && syncResult.latestUploaded) {
                 notificationManager.cancelProgressNotification()
                 Result.success()
             } else {

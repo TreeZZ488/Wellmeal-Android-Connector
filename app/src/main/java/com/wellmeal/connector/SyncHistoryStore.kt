@@ -25,6 +25,7 @@ data class SyncHistoryEntry(
     val trigger: SyncTrigger,
     val outcome: SyncOutcome,
     val dailyUploaded: Boolean,
+    val latestUploaded: Boolean = false,
     val profileStatus: ProfileSyncStatus,
     val error: String? = null,
     val profileError: String? = null
@@ -140,6 +141,7 @@ class SyncHistoryStore(
             put("trigger", trigger.name)
             put("outcome", outcome.name)
             put("dailyUploaded", dailyUploaded)
+            put("latestUploaded", latestUploaded)
             put("profileStatus", profileStatus.name)
             putNullable("error", error)
             putNullable("profileError", profileError)
@@ -148,12 +150,17 @@ class SyncHistoryStore(
 
     private fun JSONObject.toSyncHistoryEntry(): SyncHistoryEntry? {
         return try {
+            val dailyUploaded = getBoolean("dailyUploaded")
+            // Backward-compatible fallback for legacy records
+            val latestUploaded = optBoolean("latestUploaded", dailyUploaded)
+
             SyncHistoryEntry(
                 completedAt = getString("completedAt"),
                 date = LocalDate.parse(getString("date")),
                 trigger = SyncTrigger.valueOf(getString("trigger")),
                 outcome = SyncOutcome.valueOf(getString("outcome")),
-                dailyUploaded = getBoolean("dailyUploaded"),
+                dailyUploaded = dailyUploaded,
+                latestUploaded = latestUploaded,
                 profileStatus = ProfileSyncStatus.valueOf(getString("profileStatus")),
                 error = optStringOrNull("error"),
                 profileError = optStringOrNull("profileError")
