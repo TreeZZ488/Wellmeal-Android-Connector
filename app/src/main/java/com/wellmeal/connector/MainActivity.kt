@@ -236,8 +236,26 @@ fun HealthConnectScreen() {
         OneDriveUploader()
     }
 
+    val syncCoordinator = remember {
+        SyncCoordinator(
+            context = context,
+            healthConnectRepository = repository,
+            healthJsonExporter = jsonExporter,
+            microsoftAuthManager = authManager,
+            oneDriveUploader = oneDriveUploader
+        )
+    }
+
     var uploadResult by remember {
         mutableStateOf<String?>(null)
+    }
+
+    var isSyncing by remember {
+        mutableStateOf(false)
+    }
+
+    var lastSyncResult by remember {
+        mutableStateOf<SyncResult?>(null)
     }
 
     val scope = rememberCoroutineScope()
@@ -386,6 +404,69 @@ fun HealthConnectScreen() {
             Spacer(modifier = Modifier.height(8.dp))
 
             Text(resultText)
+        }
+
+        // Sync section.
+        Spacer(modifier = Modifier.height(24.dp))
+
+        Text(
+            text = "Sync",
+            style = MaterialTheme.typography.titleMedium
+        )
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        Button(
+            enabled = authManager.currentUser != null && fitnessAllGranted && !isSyncing,
+            onClick = {
+                scope.launch {
+                    isSyncing = true
+                    lastSyncResult = null
+                    try {
+                        val result = syncCoordinator.performSync()
+                        lastSyncResult = result
+                    } catch (e: Exception) {
+                        lastSyncResult = SyncResult(
+                            date = java.time.LocalDate.now().minusDays(1),
+                            dailyUploaded = false,
+                            profileStatus = ProfileSyncStatus.SKIPPED,
+                            error = e.message ?: "Unknown sync error"
+                        )
+                    } finally {
+                        isSyncing = false
+                    }
+                }
+            }
+        ) {
+            Text("Sync Now")
+        }
+
+        if (isSyncing) {
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text("Syncing...")
+
+        } else {
+
+            lastSyncResult?.let { result ->
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                val resultMessage = when {
+                    result.error != null -> {
+                        "Sync failed\nError: ${result.error}"
+                    }
+                    result.profileStatus == ProfileSyncStatus.FAILED -> {
+                        "Sync completed with warnings\nDaily: ${result.date}\nProfile: failed"
+                    }
+                    else -> {
+                        "Sync successful\nDaily: ${result.date}\nProfile: ${result.profileStatus.name.lowercase()}"
+                    }
+                }
+
+                Text(resultMessage)
+            }
         }
 
         // Fitness permission section.
