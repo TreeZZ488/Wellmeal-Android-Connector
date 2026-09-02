@@ -2,6 +2,7 @@ package com.wellmeal.connector
 
 import android.app.Activity
 import android.os.Bundle
+import java.io.File
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -231,6 +232,14 @@ fun HealthConnectScreen() {
         MicrosoftAuthManager(context)
     }
 
+    val oneDriveUploader = remember {
+        OneDriveUploader()
+    }
+
+    var uploadResult by remember {
+        mutableStateOf<String?>(null)
+    }
+
     val scope = rememberCoroutineScope()
 
     // Store the currently loaded daily health snapshot.
@@ -329,6 +338,54 @@ fun HealthConnectScreen() {
             Spacer(modifier = Modifier.height(8.dp))
 
             Text("Auth error: $error")
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        Button(
+            enabled = authManager.currentUser != null,
+            onClick = {
+
+                val profileFile = File(context.filesDir, "exports/profile.json")
+
+                if (!profileFile.exists()) {
+                    uploadResult = "profile.json not found"
+                    return@Button
+                }
+
+                uploadResult = "Uploading profile.json..."
+
+                authManager.acquireTokenSilent(
+                    scopes = listOf("Files.ReadWrite.AppFolder"),
+                    onSuccess = { authResult ->
+                        scope.launch {
+                            val result = oneDriveUploader.uploadToAppFolder(
+                                accessToken = authResult.accessToken,
+                                file = profileFile,
+                                remoteFilename = "profile.json"
+                            )
+
+                            uploadResult = if (result.isSuccess) {
+                                "OneDrive upload successful"
+                            } else {
+                                "Upload failed: ${result.exceptionOrNull()?.message}"
+                            }
+                        }
+                    },
+                    onError = { exception ->
+                        uploadResult = "Token error: ${exception.message}"
+                    }
+                )
+            }
+        ) {
+            Text("Upload Profile to OneDrive")
+        }
+
+        uploadResult?.let { resultText ->
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text(resultText)
         }
 
         // Fitness permission section.
