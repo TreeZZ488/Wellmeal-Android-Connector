@@ -20,12 +20,15 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -54,6 +57,7 @@ fun SettingsScreen(
     onLaunchNotificationPermission: () -> Unit,
     authManager: MicrosoftAuthManager,
     oneDriveUploader: OneDriveUploader,
+    healthEmailSender: HealthEmailSender = remember { HealthEmailSender() },
     personalHealthRecordAvailable: Boolean,
     fitnessAllGranted: Boolean,
     fitnessGrantedCount: Int,
@@ -413,6 +417,165 @@ fun SettingsScreen(
                         MaterialTheme.colorScheme.primary
                     }
                 )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Daily Health Email Settings Card
+        Card(
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp)
+            ) {
+                Text(
+                    text = "Daily Health Email",
+                    style = MaterialTheme.typography.titleMedium
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Text(
+                    text = "Daily Health Email sends a copy of your daily health summary to the configured email address. Your existing OneDrive health archive is not affected.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Email Enable Switch
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Enable daily health email",
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                    Switch(
+                        checked = syncSettings.dailyHealthEmailEnabled,
+                        onCheckedChange = { isChecked ->
+                            onSyncSettingsChanged(
+                                syncSettings.copy(dailyHealthEmailEnabled = isChecked).normalized()
+                            )
+                        }
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Recipient OutlinedTextField
+                OutlinedTextField(
+                    value = syncSettings.emailRecipient,
+                    onValueChange = { newRecipient ->
+                        onSyncSettingsChanged(
+                            syncSettings.copy(emailRecipient = newRecipient).normalized()
+                        )
+                    },
+                    label = { Text("Recipient Email") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                var testEmailResult by remember { mutableStateOf<String?>(null) }
+                var isTestingEmail by remember { mutableStateOf(false) }
+
+                Button(
+                    enabled = !isTestingEmail,
+                    onClick = {
+                        val recipient = syncSettings.emailRecipient.trim()
+                        if (recipient.isBlank() || !android.util.Patterns.EMAIL_ADDRESS.matcher(recipient).matches()) {
+                            testEmailResult = "Please configure a valid recipient email address."
+                            return@Button
+                        }
+
+                        val user = authManager.currentUser
+                        if (user == null) {
+                            testEmailResult = "Microsoft account not signed in."
+                            return@Button
+                        }
+
+                        val activity = context as? Activity
+                        if (activity == null) {
+                            testEmailResult = "Activity context not available."
+                            return@Button
+                        }
+
+                        isTestingEmail = true
+                        testEmailResult = "Preparing test email..."
+
+                        fun executeSendMail(token: String) {
+                            scope.launch {
+                                try {
+                                    val date = java.time.LocalDate.now().minusDays(1)
+                                    val dailyFile = File(context.filesDir, "exports/health-$date.json")
+                                    val profileFile = File(context.filesDir, "exports/profile.json")
+
+                                    val dummySnapshot = snapshot ?: DailyHealthSnapshot(
+                                        date = date,
+                                        steps = null,
+                                        heartRateAverage = null,
+                                        heartRateMinimum = null,
+                                        heartRateMaximum = null,
+                                        sleepMinutes = null,
+                                        exerciseMinutes = null
+                                    )
+
+                                    val bodyText = healthEmailSender.buildEmailBody(dummySnapshot, healthProfile)
+                                    val sendRes = healthEmailSender.sendDailyHealthEmail(
+                                        accessToken = token,
+                                        recipientEmail = recipient,
+                                        date = date,
+                                        bodyText = bodyText,
+                                        dailyFile = if (dailyFile.exists()) dailyFile else null,
+                                        profileFile = if (profileFile.exists()) profileFile else null
+                                    )
+
+                                    testEmailResult = if (sendRes.isSuccess) {
+                                        "Test email sent successfully to $recipient"
+                                    } else {
+                                        "Test email failed: ${sendRes.exceptionOrNull()?.message}"
+                                    }
+                                } catch (e: Exception) {
+                                    testEmailResult = "Test email failed: ${e.message}"
+                                } finally {
+                                    isTestingEmail = false
+                                }
+                            }
+                        }
+
+                        // Try silent token first
+                        authManager.acquireMailTokenSilent(
+                            onSuccess = { authResult ->
+                                executeSendMail(authResult.accessToken)
+                            },
+                            onError = { _ ->
+                                // Prompt for interactive consent if silent token fails
+                                authManager.acquireMailTokenInteractive(
+                                    activity = activity,
+                                    onSuccess = { authResult ->
+                                        executeSendMail(authResult.accessToken)
+                                    },
+                                    onError = { interactiveError ->
+                                        testEmailResult = "Mail.Send consent required: ${interactiveError.message}"
+                                        isTestingEmail = false
+                                    }
+                                )
+                            }
+                        )
+                    }
+                ) {
+                    Text("Send Test Health Email")
+                }
+
+                testEmailResult?.let { result ->
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(result)
+                }
             }
         }
 

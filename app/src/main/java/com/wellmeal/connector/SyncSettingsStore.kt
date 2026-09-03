@@ -20,6 +20,9 @@ class SyncSettingsStore(
             val enabled = preferences.getBoolean(KEY_AUTO_SYNC_ENABLED, false)
             val wifiOnly = preferences.getBoolean(KEY_WIFI_ONLY, false)
             val avoidLowBattery = preferences.getBoolean(KEY_AVOID_LOW_BATTERY, true)
+            val emailEnabled = preferences.getBoolean(KEY_EMAIL_ENABLED, false)
+            val recipient = preferences.getString(KEY_EMAIL_RECIPIENT, "") ?: ""
+            val lastEmailed = preferences.getString(KEY_LAST_EMAILED_DATE, "") ?: ""
 
             val rawTimes = preferences.getString(KEY_SYNC_TIMES, null)
             val times = if (!rawTimes.isNullOrBlank()) {
@@ -47,7 +50,10 @@ class SyncSettingsStore(
                 automaticSyncEnabled = enabled,
                 syncTimes = validTimes,
                 wifiOnly = wifiOnly,
-                avoidLowBattery = avoidLowBattery
+                avoidLowBattery = avoidLowBattery,
+                dailyHealthEmailEnabled = emailEnabled,
+                emailRecipient = recipient,
+                lastEmailedDate = lastEmailed
             ).normalized()
         } catch (_: Exception) {
             SyncSettings().normalized()
@@ -69,7 +75,21 @@ class SyncSettingsStore(
                 .putString(KEY_SYNC_TIMES, timeString)
                 .putBoolean(KEY_WIFI_ONLY, normalized.wifiOnly)
                 .putBoolean(KEY_AVOID_LOW_BATTERY, normalized.avoidLowBattery)
+                .putBoolean(KEY_EMAIL_ENABLED, normalized.dailyHealthEmailEnabled)
+                .putString(KEY_EMAIL_RECIPIENT, normalized.emailRecipient)
+                .putString(KEY_LAST_EMAILED_DATE, normalized.lastEmailedDate)
                 .apply()
+        } catch (_: Exception) {
+            // Fail gracefully
+        }
+    }
+
+    /**
+     * Updates and saves the last successfully emailed date.
+     */
+    fun saveLastEmailedDate(dateString: String) {
+        try {
+            preferences.edit().putString(KEY_LAST_EMAILED_DATE, dateString).apply()
         } catch (_: Exception) {
             // Fail gracefully
         }
@@ -81,6 +101,9 @@ class SyncSettingsStore(
         private const val KEY_SYNC_TIMES = "sync_times"
         private const val KEY_WIFI_ONLY = "wifi_only"
         private const val KEY_AVOID_LOW_BATTERY = "avoid_low_battery"
+        private const val KEY_EMAIL_ENABLED = "daily_health_email_enabled"
+        private const val KEY_EMAIL_RECIPIENT = "email_recipient"
+        private const val KEY_LAST_EMAILED_DATE = "last_emailed_date"
 
         private val TIME_FORMATTER = DateTimeFormatter.ofPattern("HH:mm")
         private val DEFAULT_TIMES = listOf(LocalTime.of(8, 0), LocalTime.of(20, 0))

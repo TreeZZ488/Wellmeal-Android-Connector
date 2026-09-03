@@ -7,10 +7,18 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.time.Instant
 import java.time.LocalDate
+import androidx.health.connect.client.feature.ExperimentalPersonalHealthRecordApi
 import kotlin.coroutines.resume
 
 enum class ProfileSyncStatus {
     UPLOADED,
+    SKIPPED,
+    FAILED
+}
+
+enum class EmailDeliveryStatus {
+    DISABLED,
+    SENT,
     SKIPPED,
     FAILED
 }
@@ -20,6 +28,8 @@ data class SyncResult(
     val dailyUploaded: Boolean,
     val latestUploaded: Boolean,
     val profileStatus: ProfileSyncStatus,
+    val emailStatus: EmailDeliveryStatus = EmailDeliveryStatus.DISABLED,
+    val emailError: String? = null,
     val retryable: Boolean = false,
     val profileError: String? = null,
     val error: String? = null
@@ -31,7 +41,9 @@ class SyncCoordinator(
     private val healthJsonExporter: HealthJsonExporter,
     private val microsoftAuthManager: MicrosoftAuthManager,
     private val oneDriveUploader: OneDriveUploader,
-    private val syncHistoryStore: SyncHistoryStore = SyncHistoryStore(context)
+    private val syncHistoryStore: SyncHistoryStore = SyncHistoryStore(context),
+    private val syncSettingsStore: SyncSettingsStore = SyncSettingsStore(context),
+    private val healthEmailSender: HealthEmailSender = HealthEmailSender()
 ) {
 
     /**
@@ -41,7 +53,7 @@ class SyncCoordinator(
         trigger: SyncTrigger = SyncTrigger.MANUAL,
         isLastRetry: Boolean = false
     ): SyncResult = withContext(Dispatchers.IO) {
-        val rawResult = executeSync()
+        val rawResult = executeSync(trigger)
         val result = if (isLastRetry && rawResult.retryable) {
             rawResult.copy(retryable = false)
         } else {
@@ -52,9 +64,9 @@ class SyncCoordinator(
     }
 
     /**
-     * Executes actual sync steps and classifies failures.
+     * Executes actual sync steps and optional email delivery.
      */
-    private suspend fun executeSync(): SyncResult {
+    private suspend fun executeSync(trigger: SyncTrigger): SyncResult {
         // 1. Read yesterday's aggregated health data
         val snapshot = try {
             healthConnectRepository.getYesterdaySummary()
@@ -84,7 +96,7 @@ class SyncCoordinator(
             )
         }
 
-        // 3. Acquire Microsoft Graph access token silently
+        // 3. Acquire Microsoft Graph access token silently for OneDrive
         val tokenResult = acquireToken()
         val accessToken = tokenResult.getOrElse {
             val isTransient = isTransientNetworkError(it)
@@ -174,14 +186,89 @@ class SyncCoordinator(
             Pair(ProfileSyncStatus.SKIPPED, null)
         }
 
+        // 8. Optional Daily Health Email delivery
+        val (emailStatus, emailError) = processDailyEmail(snapshot, trigger, dailyFile, profileFile)
+
         return SyncResult(
             date = snapshot.date,
             dailyUploaded = true,
             latestUploaded = true,
             profileStatus = profileStatus,
+            emailStatus = emailStatus,
+            emailError = emailError,
             retryable = false,
             profileError = profileError
         )
+    }
+
+    /**
+     * Handles optional daily health email delivery during automatic sync.
+     */
+    @OptIn(ExperimentalPersonalHealthRecordApi::class)
+    private suspend fun processDailyEmail(
+        snapshot: DailyHealthSnapshot,
+        trigger: SyncTrigger,
+        dailyFile: File?,
+        profileFile: File?
+    ): Pair<EmailDeliveryStatus, String?> {
+        val settings = syncSettingsStore.load()
+
+        if (!settings.dailyHealthEmailEnabled || settings.emailRecipient.isBlank()) {
+            return Pair(EmailDeliveryStatus.DISABLED, null)
+        }
+
+        if (trigger != SyncTrigger.AUTOMATIC) {
+            // Manual sync does not trigger automatic email
+            return Pair(EmailDeliveryStatus.SKIPPED, null)
+        }
+
+        // Check idempotency: skip if already emailed for this date
+        if (settings.lastEmailedDate == snapshot.date.toString()) {
+            return Pair(EmailDeliveryStatus.SKIPPED, null)
+        }
+
+        // Acquire Mail.Send token silently
+        val mailTokenResult = acquireMailToken()
+        val mailAccessToken = mailTokenResult.getOrElse {
+            return Pair(
+                EmailDeliveryStatus.FAILED,
+                "Mail.Send consent required: ${it.message}"
+            )
+        }
+
+        // Read health profile for email body
+        val healthProfile = try {
+            val parser = MedicalProfileParser()
+            val medicalRepo = MedicalProfileRepository(context)
+            val store = DietaryRestrictionStore(context)
+            parser.parse(
+                allergies = medicalRepo.readAllergies(),
+                medications = medicalRepo.readMedications(),
+                dietaryRestrictions = store.load()
+            )
+        } catch (_: Exception) {
+            null
+        }
+
+        val bodyText = healthEmailSender.buildEmailBody(snapshot, healthProfile)
+        val sendResult = healthEmailSender.sendDailyHealthEmail(
+            accessToken = mailAccessToken,
+            recipientEmail = settings.emailRecipient,
+            date = snapshot.date,
+            bodyText = bodyText,
+            dailyFile = dailyFile,
+            profileFile = profileFile
+        )
+
+        return if (sendResult.isSuccess) {
+            syncSettingsStore.saveLastEmailedDate(snapshot.date.toString())
+            Pair(EmailDeliveryStatus.SENT, null)
+        } else {
+            Pair(
+                EmailDeliveryStatus.FAILED,
+                sendResult.exceptionOrNull()?.message
+            )
+        }
     }
 
     /**
@@ -191,7 +278,7 @@ class SyncCoordinator(
         try {
             val outcome = when {
                 !result.dailyUploaded || !result.latestUploaded || result.error != null -> SyncOutcome.FAILED
-                result.profileStatus == ProfileSyncStatus.FAILED -> SyncOutcome.PARTIAL
+                result.profileStatus == ProfileSyncStatus.FAILED || result.emailStatus == EmailDeliveryStatus.FAILED -> SyncOutcome.PARTIAL
                 else -> SyncOutcome.SUCCESS
             }
 
@@ -203,9 +290,10 @@ class SyncCoordinator(
                 dailyUploaded = result.dailyUploaded,
                 latestUploaded = result.latestUploaded,
                 profileStatus = result.profileStatus,
+                emailStatus = result.emailStatus,
                 retryScheduled = result.retryable,
                 error = if (result.retryable) "Temporary network error" else result.error,
-                profileError = result.profileError
+                profileError = result.profileError ?: result.emailError
             )
 
             syncHistoryStore.appendEntry(entry)
@@ -215,11 +303,29 @@ class SyncCoordinator(
     }
 
     /**
-     * Converts MicrosoftAuthManager callback into a suspend function.
+     * Converts MicrosoftAuthManager callback into a suspend function for OneDrive token.
      */
     private suspend fun acquireToken(): Result<String> = suspendCancellableCoroutine { continuation ->
         microsoftAuthManager.acquireTokenSilent(
             scopes = listOf("Files.ReadWrite.AppFolder"),
+            onSuccess = { authResult ->
+                if (continuation.isActive) {
+                    continuation.resume(Result.success(authResult.accessToken))
+                }
+            },
+            onError = { exception ->
+                if (continuation.isActive) {
+                    continuation.resume(Result.failure(exception))
+                }
+            }
+        )
+    }
+
+    /**
+     * Converts MicrosoftAuthManager callback into a suspend function for Mail.Send token.
+     */
+    private suspend fun acquireMailToken(): Result<String> = suspendCancellableCoroutine { continuation ->
+        microsoftAuthManager.acquireMailTokenSilent(
             onSuccess = { authResult ->
                 if (continuation.isActive) {
                     continuation.resume(Result.success(authResult.accessToken))

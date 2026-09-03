@@ -5,6 +5,7 @@ import android.content.Context
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import com.microsoft.identity.client.AcquireTokenParameters
 import com.microsoft.identity.client.AcquireTokenSilentParameters
 import com.microsoft.identity.client.AuthenticationCallback
 import com.microsoft.identity.client.IAccount
@@ -212,5 +213,65 @@ class MicrosoftAuthManager(
             .build()
 
         app.acquireTokenSilentAsync(parameters)
+    }
+
+    /**
+     * Acquires Mail.Send access token silently for email delivery.
+     */
+    fun acquireMailTokenSilent(
+        onSuccess: (IAuthenticationResult) -> Unit,
+        onError: (MsalException) -> Unit
+    ) {
+        acquireTokenSilent(
+            scopes = listOf("Mail.Send"),
+            onSuccess = onSuccess,
+            onError = onError
+        )
+    }
+
+    /**
+     * Prompts the user interactively in the foreground UI for Mail.Send consent if needed.
+     */
+    fun acquireMailTokenInteractive(
+        activity: Activity,
+        onSuccess: (IAuthenticationResult) -> Unit,
+        onError: (MsalException) -> Unit
+    ) {
+        val app = msalApp
+        val account = currentUser
+
+        if (app == null || account == null) {
+            val exception = MsalClientException(
+                "NO_CURRENT_ACCOUNT",
+                "No user is currently signed in or MSAL is not initialized"
+            )
+            authError = exception.message
+            onError(exception)
+            return
+        }
+
+        val parameters = AcquireTokenParameters.Builder()
+            .startAuthorizationFromActivity(activity)
+            .forAccount(account)
+            .fromAuthority(account.authority)
+            .withScopes(listOf("Mail.Send"))
+            .withCallback(object : AuthenticationCallback {
+                override fun onSuccess(authenticationResult: IAuthenticationResult) {
+                    authError = null
+                    onSuccess(authenticationResult)
+                }
+
+                override fun onError(exception: MsalException) {
+                    authError = exception.message ?: "Interactive Mail.Send consent failed"
+                    onError(exception)
+                }
+
+                override fun onCancel() {
+                    onError(MsalClientException("CANCELLED", "User cancelled Mail.Send consent"))
+                }
+            })
+            .build()
+
+        app.acquireToken(parameters)
     }
 }

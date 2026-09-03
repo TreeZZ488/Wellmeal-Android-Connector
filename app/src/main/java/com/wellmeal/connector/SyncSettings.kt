@@ -9,7 +9,10 @@ data class SyncSettings(
         LocalTime.of(20, 0)
     ),
     val wifiOnly: Boolean = false,
-    val avoidLowBattery: Boolean = true
+    val avoidLowBattery: Boolean = true,
+    val dailyHealthEmailEnabled: Boolean = false,
+    val emailRecipient: String = "",
+    val lastEmailedDate: String = ""
 ) {
     /**
      * Ensures times are unique, between 1 and 3 items, and sorted ascending.
@@ -21,6 +24,9 @@ data class SyncSettings(
             uniqueSorted.size > 3 -> uniqueSorted.take(3)
             else -> uniqueSorted
         }
-        return copy(syncTimes = clamped)
+        return copy(
+            syncTimes = clamped,
+            emailRecipient = emailRecipient.trim()
+        )
     }
 }

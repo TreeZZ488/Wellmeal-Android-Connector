@@ -93,6 +93,7 @@ fun HistoryScreen(
                         Text("Daily: ${if (entry.dailyUploaded) "Uploaded" else "Failed"}")
                         Text("Latest: ${if (entry.latestUploaded) "Uploaded" else "Failed"}")
                         Text("Profile: ${entry.profileStatus.name.lowercase().replaceFirstChar { it.uppercase() }}")
+                        Text("Email: ${entry.emailStatus.name.lowercase().replaceFirstChar { it.uppercase() }}")
                         Text("Trigger: ${entry.trigger.name.lowercase().replaceFirstChar { it.uppercase() }}")
                         if (entry.retryScheduled) {
                             Text("Retry scheduled: Yes")

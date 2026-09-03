@@ -27,6 +27,7 @@ data class SyncHistoryEntry(
     val dailyUploaded: Boolean,
     val latestUploaded: Boolean = false,
     val profileStatus: ProfileSyncStatus,
+    val emailStatus: EmailDeliveryStatus = EmailDeliveryStatus.DISABLED,
     val retryScheduled: Boolean = false,
     val error: String? = null,
     val profileError: String? = null
@@ -144,6 +145,7 @@ class SyncHistoryStore(
             put("dailyUploaded", dailyUploaded)
             put("latestUploaded", latestUploaded)
             put("profileStatus", profileStatus.name)
+            put("emailStatus", emailStatus.name)
             put("retryScheduled", retryScheduled)
             putNullable("error", error)
             putNullable("profileError", profileError)
@@ -157,6 +159,13 @@ class SyncHistoryStore(
             val latestUploaded = optBoolean("latestUploaded", dailyUploaded)
             val retryScheduled = optBoolean("retryScheduled", false)
 
+            val emailStatusStr = optString("emailStatus", EmailDeliveryStatus.DISABLED.name)
+            val emailStatus = try {
+                EmailDeliveryStatus.valueOf(emailStatusStr)
+            } catch (_: Exception) {
+                EmailDeliveryStatus.DISABLED
+            }
+
             SyncHistoryEntry(
                 completedAt = getString("completedAt"),
                 date = LocalDate.parse(getString("date")),
@@ -165,6 +174,7 @@ class SyncHistoryStore(
                 dailyUploaded = dailyUploaded,
                 latestUploaded = latestUploaded,
                 profileStatus = ProfileSyncStatus.valueOf(getString("profileStatus")),
+                emailStatus = emailStatus,
                 retryScheduled = retryScheduled,
                 error = optStringOrNull("error"),
                 profileError = optStringOrNull("profileError")

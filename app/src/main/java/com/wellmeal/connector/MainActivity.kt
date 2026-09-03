@@ -318,6 +318,10 @@ fun HealthConnectScreen() {
         )
     }
 
+    val healthEmailSender = remember {
+        HealthEmailSender()
+    }
+
     val syncCoordinator = remember {
         SyncCoordinator(
             context = context,
@@ -325,7 +329,9 @@ fun HealthConnectScreen() {
             healthJsonExporter = jsonExporter,
             microsoftAuthManager = authManager,
             oneDriveUploader = oneDriveUploader,
-            syncHistoryStore = syncHistoryStore
+            syncHistoryStore = syncHistoryStore,
+            syncSettingsStore = syncSettingsStore,
+            healthEmailSender = healthEmailSender
         )
     }
 
@@ -493,6 +499,7 @@ fun HealthConnectScreen() {
                     },
                     authManager = authManager,
                     oneDriveUploader = oneDriveUploader,
+                    healthEmailSender = healthEmailSender,
                     personalHealthRecordAvailable = personalHealthRecordAvailable,
                     fitnessAllGranted = fitnessAllGranted,
                     fitnessGrantedCount = fitnessGrantedCount,
