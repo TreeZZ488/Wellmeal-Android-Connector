@@ -94,6 +94,9 @@ fun HistoryScreen(
                         Text("Latest: ${if (entry.latestUploaded) "Uploaded" else "Failed"}")
                         Text("Profile: ${entry.profileStatus.name.lowercase().replaceFirstChar { it.uppercase() }}")
                         Text("Trigger: ${entry.trigger.name.lowercase().replaceFirstChar { it.uppercase() }}")
+                        if (entry.retryScheduled) {
+                            Text("Retry scheduled: Yes")
+                        }
 
                         if (entry.outcome != SyncOutcome.SUCCESS) {
                             val errorText = entry.error ?: entry.profileError

@@ -122,6 +122,11 @@ class AutomaticSyncScheduler(
         val workRequest = PeriodicWorkRequestBuilder<SyncWorker>(24, TimeUnit.HOURS)
             .setInitialDelay(initialDelay.toMillis(), TimeUnit.MILLISECONDS)
             .setConstraints(constraints)
+            .setBackoffCriteria(
+                androidx.work.BackoffPolicy.EXPONENTIAL,
+                2,
+                TimeUnit.MINUTES
+            )
             .build()
 
         Log.d(TAG, "enqueue slot=$slotIndex name=$workName initialDelayMinutes=$initialDelayMinutes policy=$policy wifiOnly=$wifiOnly avoidLowBattery=$avoidLowBattery")

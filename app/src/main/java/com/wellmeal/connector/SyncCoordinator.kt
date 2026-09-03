@@ -20,6 +20,7 @@ data class SyncResult(
     val dailyUploaded: Boolean,
     val latestUploaded: Boolean,
     val profileStatus: ProfileSyncStatus,
+    val retryable: Boolean = false,
     val profileError: String? = null,
     val error: String? = null
 )
@@ -37,26 +38,34 @@ class SyncCoordinator(
      * Executes one complete sync pipeline off the main thread, persisting exactly one history entry.
      */
     suspend fun performSync(
-        trigger: SyncTrigger = SyncTrigger.MANUAL
+        trigger: SyncTrigger = SyncTrigger.MANUAL,
+        isLastRetry: Boolean = false
     ): SyncResult = withContext(Dispatchers.IO) {
-        val result = executeSync()
+        val rawResult = executeSync()
+        val result = if (isLastRetry && rawResult.retryable) {
+            rawResult.copy(retryable = false)
+        } else {
+            rawResult
+        }
         saveSyncHistory(result, trigger)
         result
     }
 
     /**
-     * Executes actual sync steps.
+     * Executes actual sync steps and classifies failures.
      */
     private suspend fun executeSync(): SyncResult {
         // 1. Read yesterday's aggregated health data
         val snapshot = try {
             healthConnectRepository.getYesterdaySummary()
         } catch (e: Exception) {
+            val isTransient = isTransientNetworkError(e)
             return SyncResult(
                 date = LocalDate.now().minusDays(1),
                 dailyUploaded = false,
                 latestUploaded = false,
                 profileStatus = ProfileSyncStatus.SKIPPED,
+                retryable = isTransient,
                 error = "Failed to read Health Connect data: ${e.message}"
             )
         }
@@ -70,6 +79,7 @@ class SyncCoordinator(
                 dailyUploaded = false,
                 latestUploaded = false,
                 profileStatus = ProfileSyncStatus.SKIPPED,
+                retryable = false,
                 error = "Failed to export daily JSON locally: ${e.message}"
             )
         }
@@ -77,11 +87,13 @@ class SyncCoordinator(
         // 3. Acquire Microsoft Graph access token silently
         val tokenResult = acquireToken()
         val accessToken = tokenResult.getOrElse {
+            val isTransient = isTransientNetworkError(it)
             return SyncResult(
                 date = snapshot.date,
                 dailyUploaded = false,
                 latestUploaded = false,
                 profileStatus = ProfileSyncStatus.SKIPPED,
+                retryable = isTransient,
                 error = "Token acquisition failed: ${it.message}"
             )
         }
@@ -89,12 +101,15 @@ class SyncCoordinator(
         // 4. Ensure the 'daily' folder exists in OneDrive App Folder
         val folderResult = oneDriveUploader.ensureFolder(accessToken, "daily")
         if (folderResult.isFailure) {
+            val err = folderResult.exceptionOrNull()
+            val isTransient = isTransientNetworkError(err)
             return SyncResult(
                 date = snapshot.date,
                 dailyUploaded = false,
                 latestUploaded = false,
                 profileStatus = ProfileSyncStatus.SKIPPED,
-                error = "AppFolder setup failed: ${folderResult.exceptionOrNull()?.message}"
+                retryable = isTransient,
+                error = "AppFolder setup failed: ${err?.message}"
             )
         }
 
@@ -107,12 +122,15 @@ class SyncCoordinator(
         )
 
         if (dailyUploadResult.isFailure) {
+            val err = dailyUploadResult.exceptionOrNull()
+            val isTransient = isTransientNetworkError(err)
             return SyncResult(
                 date = snapshot.date,
                 dailyUploaded = false,
                 latestUploaded = false,
                 profileStatus = ProfileSyncStatus.SKIPPED,
-                error = "Daily JSON upload failed: ${dailyUploadResult.exceptionOrNull()?.message}"
+                retryable = isTransient,
+                error = "Daily JSON upload failed: ${err?.message}"
             )
         }
 
@@ -124,12 +142,15 @@ class SyncCoordinator(
         )
 
         if (latestUploadResult.isFailure) {
+            val err = latestUploadResult.exceptionOrNull()
+            val isTransient = isTransientNetworkError(err)
             return SyncResult(
                 date = snapshot.date,
                 dailyUploaded = true,
                 latestUploaded = false,
                 profileStatus = ProfileSyncStatus.SKIPPED,
-                error = "Latest JSON upload failed: ${latestUploadResult.exceptionOrNull()?.message}"
+                retryable = isTransient,
+                error = "Latest JSON upload failed: ${err?.message}"
             )
         }
 
@@ -158,6 +179,7 @@ class SyncCoordinator(
             dailyUploaded = true,
             latestUploaded = true,
             profileStatus = profileStatus,
+            retryable = false,
             profileError = profileError
         )
     }
@@ -181,7 +203,8 @@ class SyncCoordinator(
                 dailyUploaded = result.dailyUploaded,
                 latestUploaded = result.latestUploaded,
                 profileStatus = result.profileStatus,
-                error = result.error,
+                retryScheduled = result.retryable,
+                error = if (result.retryable) "Temporary network error" else result.error,
                 profileError = result.profileError
             )
 
@@ -209,4 +232,55 @@ class SyncCoordinator(
             }
         )
     }
+}
+
+/**
+ * Checks whether an exception is caused by a transient network condition (e.g. DNS resolution error, socket timeout).
+ */
+fun isTransientNetworkError(throwable: Throwable?): Boolean {
+    var curr: Throwable? = throwable
+    var depth = 0
+    while (curr != null && depth < 10) {
+        if (curr is java.net.UnknownHostException ||
+            curr is java.net.SocketTimeoutException ||
+            curr is java.net.ConnectException ||
+            curr is java.net.SocketException
+        ) {
+            return true
+        }
+
+        if (curr is com.microsoft.identity.client.exception.MsalException) {
+            val errorCode = curr.errorCode?.lowercase() ?: ""
+            if (errorCode == "io_error" ||
+                errorCode == "no_network" ||
+                errorCode == "network_unavailable" ||
+                errorCode == "device_offline"
+            ) {
+                return true
+            }
+        }
+
+        val msg = curr.message?.lowercase() ?: ""
+        if (msg.contains("unable to resolve host") ||
+            msg.contains("no address associated with hostname") ||
+            msg.contains("network layer") ||
+            msg.contains("socket time out") ||
+            msg.contains("sockettimeout") ||
+            msg.contains("unknownhost") ||
+            msg.contains("connection refused") ||
+            msg.contains("connection reset") ||
+            msg.contains("failed to connect to") ||
+            msg.contains("software caused connection abort")
+        ) {
+            return true
+        }
+
+        if (curr is java.io.IOException && !msg.contains("file not found") && !msg.contains("permission denied")) {
+            return true
+        }
+
+        curr = curr.cause
+        depth++
+    }
+    return false
 }
