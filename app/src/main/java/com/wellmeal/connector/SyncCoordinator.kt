@@ -53,21 +53,21 @@ class SyncCoordinator(
         trigger: SyncTrigger = SyncTrigger.MANUAL,
         isLastRetry: Boolean = false
     ): SyncResult = withContext(Dispatchers.IO) {
-        val rawResult = executeSync(trigger)
+        val rawResult = executeSyncAttempt(trigger)
         val result = if (isLastRetry && rawResult.retryable) {
             rawResult.copy(retryable = false)
         } else {
             rawResult
         }
-        saveSyncHistory(result, trigger)
+        recordSyncHistory(result, trigger)
         result
     }
 
     /**
-     * Executes actual sync steps and optional email delivery.
+     * Executes actual low-level sync steps without writing to SyncHistory.
      */
     @OptIn(ExperimentalPersonalHealthRecordApi::class)
-    private suspend fun executeSync(trigger: SyncTrigger): SyncResult {
+    suspend fun executeSyncAttempt(trigger: SyncTrigger = SyncTrigger.MANUAL): SyncResult {
         // 1. Read yesterday's aggregated health data
         val snapshot = try {
             healthConnectRepository.getYesterdaySummary()
@@ -320,12 +320,22 @@ class SyncCoordinator(
     /**
      * Converts SyncResult into SyncHistoryEntry and appends it to local storage.
      */
-    private fun saveSyncHistory(result: SyncResult, trigger: SyncTrigger) {
+    fun recordSyncHistory(result: SyncResult, trigger: SyncTrigger) {
         try {
             val outcome = when {
                 !result.dailyUploaded || !result.latestUploaded || result.error != null -> SyncOutcome.FAILED
                 result.profileStatus == ProfileSyncStatus.FAILED || result.emailStatus == EmailDeliveryStatus.FAILED -> SyncOutcome.PARTIAL
                 else -> SyncOutcome.SUCCESS
+            }
+
+            val formattedError = if (result.retryable && !result.error.isNullOrBlank()) {
+                if (result.error.startsWith("Temporary network error")) {
+                    result.error
+                } else {
+                    "Temporary network error: ${result.error}"
+                }
+            } else {
+                result.error
             }
 
             val entry = SyncHistoryEntry(
@@ -338,7 +348,7 @@ class SyncCoordinator(
                 profileStatus = result.profileStatus,
                 emailStatus = result.emailStatus,
                 retryScheduled = result.retryable,
-                error = if (result.retryable) "Temporary network error" else result.error,
+                error = formattedError,
                 profileError = result.profileError ?: result.emailError
             )
 
