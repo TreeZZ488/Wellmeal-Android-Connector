@@ -1,13 +1,13 @@
 package com.wellmeal.connector
 
 import android.content.Context
+import androidx.health.connect.client.feature.ExperimentalPersonalHealthRecordApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.time.Instant
 import java.time.LocalDate
-import androidx.health.connect.client.feature.ExperimentalPersonalHealthRecordApi
 import kotlin.coroutines.resume
 
 enum class ProfileSyncStatus {
@@ -66,6 +66,7 @@ class SyncCoordinator(
     /**
      * Executes actual sync steps and optional email delivery.
      */
+    @OptIn(ExperimentalPersonalHealthRecordApi::class)
     private suspend fun executeSync(trigger: SyncTrigger): SyncResult {
         // 1. Read yesterday's aggregated health data
         val snapshot = try {
@@ -166,25 +167,8 @@ class SyncCoordinator(
             )
         }
 
-        // 7. Check if profile.json exists locally and upload it if present
-        val profileFile = File(context.filesDir, "exports/profile.json")
-        val (profileStatus, profileError) = if (profileFile.exists()) {
-            val profileUploadResult = oneDriveUploader.uploadToAppFolderPath(
-                accessToken = accessToken,
-                file = profileFile,
-                relativePath = "profile.json"
-            )
-            if (profileUploadResult.isSuccess) {
-                Pair(ProfileSyncStatus.UPLOADED, null)
-            } else {
-                Pair(
-                    ProfileSyncStatus.FAILED,
-                    profileUploadResult.exceptionOrNull()?.message
-                )
-            }
-        } else {
-            Pair(ProfileSyncStatus.SKIPPED, null)
-        }
+        // 7. Rebuild current Medical Profile, export locally, and upload/overwrite OneDrive profile.json
+        val (profileStatus, profileError, profileFile) = syncMedicalProfile(accessToken)
 
         // 8. Optional Daily Health Email delivery
         val (emailStatus, emailError) = processDailyEmail(snapshot, trigger, dailyFile, profileFile)
@@ -199,6 +183,68 @@ class SyncCoordinator(
             retryable = false,
             profileError = profileError
         )
+    }
+
+    /**
+     * Reads current local Medical Profile state, exports/overwrites local profile.json,
+     * and uploads/overwrites OneDrive profile.json.
+     */
+    @OptIn(ExperimentalPersonalHealthRecordApi::class)
+    private suspend fun syncMedicalProfile(accessToken: String): Triple<ProfileSyncStatus, String?, File?> {
+        val profileFile = try {
+            val parser = MedicalProfileParser()
+            val medicalRepo = MedicalProfileRepository(context)
+            val store = DietaryRestrictionStore(context)
+            val exporter = HealthProfileJsonExporter(context)
+
+            val allergies = try {
+                medicalRepo.readAllergies()
+            } catch (_: Exception) {
+                emptyList()
+            }
+
+            val medications = try {
+                medicalRepo.readMedications()
+            } catch (_: Exception) {
+                emptyList()
+            }
+
+            val dietaryRestrictions = try {
+                store.load()
+            } catch (_: Exception) {
+                emptyList()
+            }
+
+            val healthProfile = parser.parse(
+                allergies = allergies,
+                medications = medications,
+                dietaryRestrictions = dietaryRestrictions
+            )
+
+            exporter.exportProfile(healthProfile)
+        } catch (e: Exception) {
+            return Triple(
+                ProfileSyncStatus.FAILED,
+                "Failed to generate profile.json: ${e.message}",
+                null
+            )
+        }
+
+        val uploadResult = oneDriveUploader.uploadToAppFolderPath(
+            accessToken = accessToken,
+            file = profileFile,
+            relativePath = "profile.json"
+        )
+
+        return if (uploadResult.isSuccess) {
+            Triple(ProfileSyncStatus.UPLOADED, null, profileFile)
+        } else {
+            Triple(
+                ProfileSyncStatus.FAILED,
+                uploadResult.exceptionOrNull()?.message,
+                profileFile
+            )
+        }
     }
 
     /**
