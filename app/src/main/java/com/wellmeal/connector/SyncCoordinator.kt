@@ -35,6 +35,13 @@ data class SyncResult(
     val error: String? = null
 )
 
+private data class ProfileSyncResult(
+    val status: ProfileSyncStatus,
+    val error: String?,
+    val file: File?,
+    val isTransient: Boolean = false
+)
+
 class SyncCoordinator(
     private val context: Context,
     private val healthConnectRepository: HealthConnectRepository,
@@ -168,68 +175,84 @@ class SyncCoordinator(
         }
 
         // 7. Rebuild current Medical Profile, export locally, and upload/overwrite OneDrive profile.json
-        val (profileStatus, profileError, profileFile) = syncMedicalProfile(accessToken)
+        val profileResult = syncMedicalProfile(accessToken)
 
         // 8. Optional Daily Health Email delivery
-        val (emailStatus, emailError) = processDailyEmail(snapshot, trigger, dailyFile, profileFile)
+        val (emailStatus, emailError) = processDailyEmail(snapshot, trigger, dailyFile, profileResult.file)
 
         return SyncResult(
             date = snapshot.date,
             dailyUploaded = true,
             latestUploaded = true,
-            profileStatus = profileStatus,
+            profileStatus = profileResult.status,
             emailStatus = emailStatus,
             emailError = emailError,
-            retryable = false,
-            profileError = profileError
+            retryable = profileResult.isTransient,
+            profileError = profileResult.error
         )
     }
 
     /**
-     * Reads current local Medical Profile state, exports/overwrites local profile.json,
-     * and uploads/overwrites OneDrive profile.json.
+     * Reads current Medical Profile state. If PHR permissions are missing or read fails,
+     * returns ProfileSyncStatus.FAILED without overwriting OneDrive profile.json with empty data.
      */
     @OptIn(ExperimentalPersonalHealthRecordApi::class)
-    private suspend fun syncMedicalProfile(accessToken: String): Triple<ProfileSyncStatus, String?, File?> {
-        val profileFile = try {
-            val parser = MedicalProfileParser()
-            val medicalRepo = MedicalProfileRepository(context)
-            val store = DietaryRestrictionStore(context)
-            val exporter = HealthProfileJsonExporter(context)
+    private suspend fun syncMedicalProfile(accessToken: String): ProfileSyncResult {
+        val parser = MedicalProfileParser()
+        val medicalRepo = MedicalProfileRepository(context)
+        val store = DietaryRestrictionStore(context)
+        val exporter = HealthProfileJsonExporter(context)
 
-            val allergies = try {
-                medicalRepo.readAllergies()
-            } catch (_: Exception) {
-                emptyList()
-            }
-
-            val medications = try {
-                medicalRepo.readMedications()
-            } catch (_: Exception) {
-                emptyList()
-            }
-
-            val dietaryRestrictions = try {
-                store.load()
-            } catch (_: Exception) {
-                emptyList()
-            }
-
-            val healthProfile = parser.parse(
-                allergies = allergies,
-                medications = medications,
-                dietaryRestrictions = dietaryRestrictions
-            )
-
-            exporter.exportProfile(healthProfile)
+        // 1. Read Health Connect PHR allergies and medications
+        val allergies = try {
+            medicalRepo.readAllergies()
         } catch (e: Exception) {
-            return Triple(
-                ProfileSyncStatus.FAILED,
-                "Failed to generate profile.json: ${e.message}",
-                null
+            return ProfileSyncResult(
+                status = ProfileSyncStatus.FAILED,
+                error = "Health Connect medical permission missing or allergy read failed: ${e.message}",
+                file = null,
+                isTransient = false
             )
         }
 
+        val medications = try {
+            medicalRepo.readMedications()
+        } catch (e: Exception) {
+            return ProfileSyncResult(
+                status = ProfileSyncStatus.FAILED,
+                error = "Health Connect medical permission missing or medication read failed: ${e.message}",
+                file = null,
+                isTransient = false
+            )
+        }
+
+        // 2. Read locally managed dietary restrictions (always preserved)
+        val dietaryRestrictions = try {
+            store.load()
+        } catch (_: Exception) {
+            emptyList()
+        }
+
+        // 3. Rebuild HealthProfile (0 records from a successful read is a valid empty profile)
+        val healthProfile = parser.parse(
+            allergies = allergies,
+            medications = medications,
+            dietaryRestrictions = dietaryRestrictions
+        )
+
+        // 4. Export to local profile.json
+        val profileFile = try {
+            exporter.exportProfile(healthProfile)
+        } catch (e: Exception) {
+            return ProfileSyncResult(
+                status = ProfileSyncStatus.FAILED,
+                error = "Failed to generate profile.json locally: ${e.message}",
+                file = null,
+                isTransient = false
+            )
+        }
+
+        // 5. Upload/overwrite OneDrive profile.json
         val uploadResult = oneDriveUploader.uploadToAppFolderPath(
             accessToken = accessToken,
             file = profileFile,
@@ -237,12 +260,20 @@ class SyncCoordinator(
         )
 
         return if (uploadResult.isSuccess) {
-            Triple(ProfileSyncStatus.UPLOADED, null, profileFile)
+            ProfileSyncResult(
+                status = ProfileSyncStatus.UPLOADED,
+                error = null,
+                file = profileFile,
+                isTransient = false
+            )
         } else {
-            Triple(
-                ProfileSyncStatus.FAILED,
-                uploadResult.exceptionOrNull()?.message,
-                profileFile
+            val uploadError = uploadResult.exceptionOrNull()
+            val isTransient = isTransientNetworkError(uploadError)
+            ProfileSyncResult(
+                status = ProfileSyncStatus.FAILED,
+                error = uploadError?.message,
+                file = profileFile,
+                isTransient = isTransient
             )
         }
     }
@@ -287,10 +318,13 @@ class SyncCoordinator(
             val parser = MedicalProfileParser()
             val medicalRepo = MedicalProfileRepository(context)
             val store = DietaryRestrictionStore(context)
+            val allergies = try { medicalRepo.readAllergies() } catch (_: Exception) { emptyList() }
+            val medications = try { medicalRepo.readMedications() } catch (_: Exception) { emptyList() }
+            val dietary = try { store.load() } catch (_: Exception) { emptyList() }
             parser.parse(
-                allergies = medicalRepo.readAllergies(),
-                medications = medicalRepo.readMedications(),
-                dietaryRestrictions = store.load()
+                allergies = allergies,
+                medications = medications,
+                dietaryRestrictions = dietary
             )
         } catch (_: Exception) {
             null
