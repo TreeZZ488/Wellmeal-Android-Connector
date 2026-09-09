@@ -2,6 +2,7 @@ package com.wellmeal.connector
 
 import android.content.Context
 import androidx.health.connect.client.feature.ExperimentalPersonalHealthRecordApi
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -78,6 +79,8 @@ class SyncCoordinator(
         // 1. Read yesterday's aggregated health data
         val snapshot = try {
             healthConnectRepository.getYesterdaySummary()
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             val isTransient = isTransientNetworkError(e)
             return SyncResult(

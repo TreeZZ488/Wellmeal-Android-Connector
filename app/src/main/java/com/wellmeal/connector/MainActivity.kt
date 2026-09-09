@@ -166,6 +166,10 @@ fun HealthConnectScreen() {
         mutableStateOf<Set<String>>(emptySet())
     }
 
+    var permissionsLoaded by remember {
+        mutableStateOf(false)
+    }
+
     // Request fitness permissions.
     val fitnessPermissionLauncher =
         rememberLauncherForActivityResult(
@@ -206,6 +210,7 @@ fun HealthConnectScreen() {
             healthConnectClient
                 .permissionController
                 .getGrantedPermissions()
+        permissionsLoaded = true
     }
 
     val fitnessGrantedCount =
@@ -311,7 +316,9 @@ fun HealthConnectScreen() {
         AutomaticSyncScheduler(context)
     }
 
-    LaunchedEffect(syncSettings, backgroundReadGranted) {
+    LaunchedEffect(syncSettings, backgroundReadGranted, permissionsLoaded) {
+        if (!permissionsLoaded) return@LaunchedEffect
+
         automaticSyncScheduler.ensureScheduled(
             settings = syncSettings,
             backgroundAccessGranted = backgroundReadGranted
