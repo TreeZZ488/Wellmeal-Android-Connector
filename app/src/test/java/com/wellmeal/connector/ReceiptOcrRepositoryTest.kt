@@ -92,4 +92,14 @@ class ReceiptOcrRepositoryTest {
         // Both "150" entries in japaneseLines should be kept, and the duplicate in latinLines skipped
         assertEquals(japaneseLines, result)
     }
+
+    @Test
+    fun ocrModes_haveDistinctAndExpectedNames() {
+        assertEquals("Baseline", ReceiptOcrRepository.MODE_BASELINE)
+        assertEquals("Enhanced Japanese", ReceiptOcrRepository.MODE_ENHANCED_JAPANESE)
+        org.junit.Assert.assertNotEquals(
+            ReceiptOcrRepository.MODE_BASELINE,
+            ReceiptOcrRepository.MODE_ENHANCED_JAPANESE
+        )
+    }
 }

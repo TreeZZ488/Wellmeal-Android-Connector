@@ -1,7 +1,12 @@
 package com.wellmeal.connector
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import android.net.Uri
+import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -28,11 +33,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.google.mlkit.vision.documentscanner.GmsDocumentScanner
+import com.google.mlkit.vision.documentscanner.GmsDocumentScannerOptions
+import com.google.mlkit.vision.documentscanner.GmsDocumentScanning
+import com.google.mlkit.vision.documentscanner.GmsDocumentScanningResult
 import kotlinx.coroutines.launch
+
+private const val TAG = "PantryScreen"
 
 @Composable
 fun PantryScreen(
-    ocrRepository: ReceiptOcrRepository? = null
+    ocrRepository: ReceiptOcrRepository? = null,
+    documentScanner: GmsDocumentScanner? = null
 ) {
     val context = LocalContext.current
     val repository = remember(ocrRepository) {
@@ -42,10 +54,11 @@ fun PantryScreen(
     var isLoading by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var recognizedLines by remember { mutableStateOf<List<String>?>(null) }
+    var ocrMode by remember { mutableStateOf<String?>(null) }
 
     val scope = rememberCoroutineScope()
 
-    // Android system photo picker launcher (no broad storage/camera permissions required)
+    // Baseline: Android system photo picker launcher (no broad storage/camera permissions required)
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
     ) { uri: Uri? ->
@@ -53,14 +66,65 @@ fun PantryScreen(
             scope.launch {
                 isLoading = true
                 errorMessage = null
+                ocrMode = ReceiptOcrRepository.MODE_BASELINE
                 try {
                     recognizedLines = repository.recognizeText(uri)
                 } catch (e: Exception) {
+                    Log.e(TAG, "Receipt baseline OCR processing failed: ${e.message}")
                     errorMessage = e.message ?: "Failed to process receipt image"
                 } finally {
                     isLoading = false
                 }
             }
+        }
+    }
+
+    // Enhanced: ML Kit Document Scanner result launcher
+    val scannerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartIntentSenderForResult()
+    ) { result ->
+        when (result.resultCode) {
+            Activity.RESULT_OK -> {
+                val scanningResult = GmsDocumentScanningResult.fromActivityResultIntent(result.data)
+                val pageUri = scanningResult?.pages?.firstOrNull()?.imageUri
+                if (pageUri != null) {
+                    scope.launch {
+                        isLoading = true
+                        errorMessage = null
+                        ocrMode = ReceiptOcrRepository.MODE_ENHANCED_JAPANESE
+                        try {
+                            recognizedLines = repository.recognizeTextJapaneseOnly(pageUri)
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Receipt enhanced Japanese OCR processing failed: ${e.message}")
+                            errorMessage = e.message ?: "Failed to process receipt image"
+                        } finally {
+                            isLoading = false
+                        }
+                    }
+                } else {
+                    Log.e(TAG, "No JPEG page returned from document scanner")
+                    errorMessage = "No scanned page returned by document scanner"
+                }
+            }
+            Activity.RESULT_CANCELED -> {
+                Log.d(TAG, "Document scanner was cancelled by user")
+            }
+            else -> {
+                Log.e(TAG, "Document scanner failed with result code: ${result.resultCode}")
+                errorMessage = "Document scanner failed with result code: ${result.resultCode}"
+            }
+        }
+    }
+
+    val scanner = remember(documentScanner) {
+        documentScanner ?: run {
+            val options = GmsDocumentScannerOptions.Builder()
+                .setGalleryImportAllowed(true)
+                .setPageLimit(1)
+                .setResultFormats(GmsDocumentScannerOptions.RESULT_FORMAT_JPEG)
+                .setScannerMode(GmsDocumentScannerOptions.SCANNER_MODE_FULL)
+                .build()
+            GmsDocumentScanning.getClient(options)
         }
     }
 
@@ -89,6 +153,44 @@ fun PantryScreen(
             modifier = Modifier.fillMaxWidth()
         ) {
             Text("Read Receipt")
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Button(
+            onClick = {
+                val activity = context.findActivity()
+                if (activity == null) {
+                    Log.e(TAG, "Cannot start document scanner: Activity context not available")
+                    errorMessage = "Cannot start document scanner: Activity not available"
+                    return@Button
+                }
+
+                try {
+                    scanner.getStartScanIntent(activity)
+                        .addOnSuccessListener { intentSender ->
+                            try {
+                                scannerLauncher.launch(
+                                    IntentSenderRequest.Builder(intentSender).build()
+                                )
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Failed to launch document scanner: ${e.message}")
+                                errorMessage = e.message ?: "Failed to launch document scanner"
+                            }
+                        }
+                        .addOnFailureListener { e ->
+                            Log.e(TAG, "Failed to start document scanner: ${e.message}")
+                            errorMessage = e.message ?: "Failed to start document scanner"
+                        }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to start document scanner: ${e.message}")
+                    errorMessage = e.message ?: "Failed to start document scanner"
+                }
+            },
+            enabled = !isLoading,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Scan Receipt (Enhanced)")
         }
 
         if (isLoading) {
@@ -137,6 +239,15 @@ fun PantryScreen(
                         style = MaterialTheme.typography.titleMedium
                     )
 
+                    if (ocrMode != null) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "OCR Mode: $ocrMode",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+
                     Spacer(modifier = Modifier.height(12.dp))
 
                     val lines = recognizedLines
@@ -159,3 +270,15 @@ fun PantryScreen(
         }
     }
 }
+
+private fun Context.findActivity(): Activity? {
+    var currentContext = this
+    while (currentContext is ContextWrapper) {
+        if (currentContext is Activity) {
+            return currentContext
+        }
+        currentContext = currentContext.baseContext
+    }
+    return null
+}
+

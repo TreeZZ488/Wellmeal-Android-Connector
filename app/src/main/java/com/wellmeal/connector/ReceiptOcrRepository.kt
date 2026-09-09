@@ -77,6 +77,46 @@ class ReceiptOcrRepository(
         }
     }
 
+    /**
+     * Enhanced OCR path for A/B experiment: processes an image using Japanese ML Kit text recognizer only.
+     * Preprocessing (cropping/perspective correction) is handled beforehand by ML Kit Document Scanner.
+     * Returns raw recognized lines from the Japanese model without running the Latin recognizer.
+     */
+    suspend fun recognizeTextJapaneseOnly(imageUri: Uri): List<String> = withContext(Dispatchers.IO) {
+        val inputImage = try {
+            InputImage.fromFilePath(context, imageUri)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to create InputImage from URI: ${e.message}")
+            throw e
+        }
+
+        val japaneseRecognizer = TextRecognition.getClient(
+            JapaneseTextRecognizerOptions.Builder().build()
+        )
+
+        try {
+            val japaneseResult = japaneseRecognizer.processImage(inputImage)
+            val lines = extractLines(japaneseResult)
+
+            // Note: Do not log recognized text to protect private receipt contents
+            Log.d(TAG, "Japanese-only receipt OCR completed successfully. Recognized line count: ${lines.size}")
+            lines
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.e(TAG, "Japanese-only receipt OCR processing failed: ${e.message}")
+            throw e
+        } finally {
+            try {
+                japaneseRecognizer.close()
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to close Japanese recognizer: ${e.message}")
+            }
+        }
+    }
+
     private fun extractLines(text: Text): List<String> {
         val lines = mutableListOf<String>()
         for (block in text.textBlocks) {
@@ -123,6 +163,8 @@ class ReceiptOcrRepository(
         }
 
     companion object {
+        const val MODE_BASELINE = "Baseline"
+        const val MODE_ENHANCED_JAPANESE = "Enhanced Japanese"
         private const val TAG = "ReceiptOcrRepository"
 
         /**
