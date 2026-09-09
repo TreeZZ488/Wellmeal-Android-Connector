@@ -19,6 +19,7 @@ import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -71,6 +72,7 @@ class MainActivity : ComponentActivity() {
 enum class Screen(val route: String, val title: String, val icon: ImageVector) {
     Home("home", "Home", Icons.Default.Home),
     MedicalProfile("medical_profile", "Medical Profile", Icons.Default.Person),
+    Pantry("pantry", "Pantry", Icons.Default.ShoppingCart),
     History("history", "History", Icons.Default.DateRange),
     Settings("settings", "Settings", Icons.Default.Settings)
 }
@@ -384,6 +386,7 @@ fun HealthConnectScreen() {
                 val screens = listOf(
                     Screen.Home,
                     Screen.MedicalProfile,
+                    Screen.Pantry,
                     Screen.History,
                     Screen.Settings
                 )
@@ -469,6 +472,10 @@ fun HealthConnectScreen() {
                         healthProfile = healthProfile?.copy(dietaryRestrictions = updated)
                     }
                 )
+            }
+
+            composable(Screen.Pantry.route) {
+                PantryScreen()
             }
 
             composable(Screen.History.route) {
