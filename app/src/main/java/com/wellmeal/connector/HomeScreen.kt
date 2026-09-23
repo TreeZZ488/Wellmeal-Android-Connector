@@ -26,8 +26,8 @@ fun HomeScreen(
     authManager: MicrosoftAuthManager,
     isSyncing: Boolean,
     lastSyncResult: SyncResult?,
-    healthProfile: HealthProfile?,
-    dietaryRestrictions: List<String>,
+    healthProfile: HealthProfile? = null,
+    dietaryRestrictions: List<String> = emptyList(),
     syncHistoryStore: SyncHistoryStore,
     syncSettings: SyncSettings,
     backgroundReadAvailable: Boolean,
@@ -139,11 +139,11 @@ fun HomeScreen(
                             result.error != null -> {
                                 "Sync failed\nError: ${result.error}"
                             }
-                            result.profileStatus == ProfileSyncStatus.FAILED -> {
-                                "Sync completed with warnings\nDaily: ${result.date}\nProfile: failed"
+                            result.emailStatus == EmailDeliveryStatus.FAILED -> {
+                                "Sync completed with warnings\nDaily: ${result.date}"
                             }
                             else -> {
-                                "Sync successful\nDaily: ${result.date}\nProfile: ${result.profileStatus.name.lowercase()}"
+                                "Sync successful\nDaily: ${result.date}"
                             }
                         }
                         Text(resultMessage)
@@ -155,41 +155,15 @@ fun HomeScreen(
                                 "Sync failed\nDaily: ${entry.date}\nError: ${entry.error ?: "Unknown error"}"
                             }
                             SyncOutcome.PARTIAL -> {
-                                "Sync completed with warnings\nDaily: ${entry.date}\nProfile: failed"
+                                "Sync completed with warnings\nDaily: ${entry.date}"
                             }
                             SyncOutcome.SUCCESS -> {
-                                "Sync successful\nDaily: ${entry.date}\nProfile: ${entry.profileStatus.name.lowercase()}"
+                                "Sync successful\nDaily: ${entry.date}"
                             }
                         }
                         Text(resultMessage)
                     }
                 }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        // Compact Medical Profile Summary Card
-        Card(
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(
-                modifier = Modifier.padding(16.dp)
-            ) {
-                Text(
-                    text = "Medical Profile Summary",
-                    style = MaterialTheme.typography.titleMedium
-                )
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                val allergyCount = healthProfile?.allergies?.size ?: 0
-                val medicationCount = healthProfile?.medications?.size ?: 0
-                val dietaryCount = dietaryRestrictions.size
-
-                Text("Allergies: $allergyCount")
-                Text("Medications: $medicationCount")
-                Text("Dietary Restrictions: $dietaryCount")
             }
         }
     }

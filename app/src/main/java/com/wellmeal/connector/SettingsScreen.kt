@@ -32,7 +32,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import androidx.health.connect.client.feature.ExperimentalPersonalHealthRecordApi
 import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkInfo
@@ -40,11 +39,11 @@ import androidx.work.WorkManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import java.io.File
+import java.time.LocalDate
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
-@OptIn(ExperimentalPersonalHealthRecordApi::class)
 @Composable
 fun SettingsScreen(
     context: Context,
@@ -58,25 +57,10 @@ fun SettingsScreen(
     authManager: MicrosoftAuthManager,
     oneDriveUploader: OneDriveUploader,
     healthEmailSender: HealthEmailSender = remember { HealthEmailSender() },
-    personalHealthRecordAvailable: Boolean,
     fitnessAllGranted: Boolean,
     fitnessGrantedCount: Int,
     fitnessPermissionsSize: Int,
     onLaunchFitnessPermission: () -> Unit,
-    medicalAllGranted: Boolean,
-    medicalGrantedCount: Int,
-    medicalPermissionsSize: Int,
-    onLaunchMedicalPermission: () -> Unit,
-    medicalRepository: MedicalProfileRepository,
-    medicalProfileParser: MedicalProfileParser,
-    healthProfile: HealthProfile?,
-    onHealthProfileUpdated: (HealthProfile) -> Unit,
-    dietaryRestrictions: List<String>,
-    profileJsonExporter: HealthProfileJsonExporter,
-    medicalResult: String?,
-    onMedicalResultUpdated: (String?) -> Unit,
-    uploadResult: String?,
-    onUploadResultUpdated: (String?) -> Unit,
     repository: HealthConnectRepository,
     jsonExporter: HealthJsonExporter,
     snapshot: DailyHealthSnapshot?,
@@ -511,9 +495,8 @@ fun SettingsScreen(
                         fun executeSendMail(token: String) {
                             scope.launch {
                                 try {
-                                    val date = java.time.LocalDate.now().minusDays(1)
+                                    val date = LocalDate.now()
                                     val dailyFile = File(context.filesDir, "exports/health-$date.json")
-                                    val profileFile = File(context.filesDir, "exports/profile.json")
 
                                     val dummySnapshot = snapshot ?: DailyHealthSnapshot(
                                         date = date,
@@ -525,14 +508,13 @@ fun SettingsScreen(
                                         exerciseMinutes = null
                                     )
 
-                                    val bodyText = healthEmailSender.buildEmailBody(dummySnapshot, healthProfile)
+                                    val bodyText = healthEmailSender.buildEmailBody(dummySnapshot)
                                     val sendRes = healthEmailSender.sendDailyHealthEmail(
                                         accessToken = token,
                                         recipientEmail = recipient,
                                         date = date,
                                         bodyText = bodyText,
-                                        dailyFile = if (dailyFile.exists()) dailyFile else null,
-                                        profileFile = if (profileFile.exists()) profileFile else null
+                                        dailyFile = if (dailyFile.exists()) dailyFile else null
                                     )
 
                                     testEmailResult = if (sendRes.isSuccess) {
@@ -596,16 +578,6 @@ fun SettingsScreen(
         Spacer(modifier = Modifier.height(16.dp))
 
         Text("Health Connect: Available")
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        Text(
-            if (personalHealthRecordAvailable) {
-                "Personal Health Record: Available"
-            } else {
-                "Personal Health Record: Unavailable"
-            }
-        )
 
         // WorkManager section
         Spacer(modifier = Modifier.height(20.dp))
@@ -679,53 +651,6 @@ fun SettingsScreen(
             Text("Auth error: $error")
         }
 
-        Spacer(modifier = Modifier.height(12.dp))
-
-        Button(
-            enabled = authManager.currentUser != null,
-            onClick = {
-                val profileFile = File(context.filesDir, "exports/profile.json")
-
-                if (!profileFile.exists()) {
-                    onUploadResultUpdated("profile.json not found")
-                    return@Button
-                }
-
-                onUploadResultUpdated("Uploading profile.json...")
-
-                authManager.acquireTokenSilent(
-                    scopes = listOf("Files.ReadWrite.AppFolder"),
-                    onSuccess = { authResult ->
-                        scope.launch {
-                            val result = oneDriveUploader.uploadToAppFolder(
-                                accessToken = authResult.accessToken,
-                                file = profileFile,
-                                remoteFilename = "profile.json"
-                            )
-
-                            onUploadResultUpdated(
-                                if (result.isSuccess) {
-                                    "OneDrive upload successful"
-                                } else {
-                                    "Upload failed: ${result.exceptionOrNull()?.message}"
-                                }
-                            )
-                        }
-                    },
-                    onError = { exception ->
-                        onUploadResultUpdated("Token error: ${exception.message}")
-                    }
-                )
-            }
-        ) {
-            Text("Upload Profile to OneDrive")
-        }
-
-        uploadResult?.let { resultText ->
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(resultText)
-        }
-
         // Fitness permission section
         Spacer(modifier = Modifier.height(20.dp))
 
@@ -754,113 +679,11 @@ fun SettingsScreen(
             Text("Request Health Permissions")
         }
 
-        // Optional medical profile permission section
-        Spacer(modifier = Modifier.height(20.dp))
-
-        Text(
-            text = "Optional Medical Profile",
-            style = MaterialTheme.typography.titleMedium
-        )
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        Text(
-            if (medicalAllGranted) {
-                "Medical permissions: Granted"
-            } else {
-                "Medical permissions: Not granted"
-            }
-        )
-
-        Text("Granted: $medicalGrantedCount / $medicalPermissionsSize")
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        Button(
-            enabled = personalHealthRecordAvailable,
-            onClick = onLaunchMedicalPermission
-        ) {
-            Text("Request Medical Permissions")
-        }
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        Button(
-            enabled = personalHealthRecordAvailable && medicalAllGranted,
-            onClick = {
-                scope.launch {
-                    try {
-                        val allergies = medicalRepository.readAllergies()
-                        val medications = medicalRepository.readMedications()
-
-                        val profile = medicalProfileParser.parse(
-                            allergies = allergies,
-                            medications = medications,
-                            dietaryRestrictions = dietaryRestrictions
-                        )
-
-                        onHealthProfileUpdated(profile)
-
-                        val allergyNames = profile.allergies
-                            .joinToString(", ") { it.name }
-                            .ifBlank { "None" }
-
-                        val medicationNames = profile.medications
-                            .joinToString(", ") { it.name }
-                            .ifBlank { "None" }
-
-                        val dietaryRestrictionNames = profile.dietaryRestrictions
-                            .joinToString(", ")
-                            .ifBlank { "None" }
-
-                        onMedicalResultUpdated(
-                            "Allergies: $allergyNames\n" +
-                                "Medications: $medicationNames\n" +
-                                "Dietary restrictions: $dietaryRestrictionNames"
-                        )
-                    } catch (e: Exception) {
-                        onMedicalResultUpdated(
-                            "Medical read failed: ${e.message ?: "Unknown error"}"
-                        )
-                    }
-                }
-            }
-        ) {
-            Text("Read Medical Profile")
-        }
-
-        medicalResult?.let {
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(it)
-        }
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        Button(
-            enabled = healthProfile != null,
-            onClick = {
-                val currentProfile = healthProfile?.copy(
-                    dietaryRestrictions = dietaryRestrictions
-                )
-
-                if (currentProfile != null) {
-                    try {
-                        val file = profileJsonExporter.exportProfile(currentProfile)
-                        onMedicalResultUpdated("Profile exported: ${file.name}")
-                    } catch (e: Exception) {
-                        onMedicalResultUpdated("Profile export failed: ${e.message ?: "Unknown error"}")
-                    }
-                }
-            }
-        ) {
-            Text("Export Profile JSON")
-        }
-
-        // Daily health summary section
+        // Today health summary section
         Spacer(modifier = Modifier.height(24.dp))
 
         if (!dataLoaded) {
-            Text("Yesterday data: Not loaded")
+            Text("Today data: Not loaded")
         } else {
             val data = snapshot
             if (loadError != null) {
@@ -889,7 +712,7 @@ fun SettingsScreen(
                     onExportResultUpdated(null)
 
                     try {
-                        val summary = repository.getYesterdaySummary()
+                        val summary = repository.getTodaySummary()
                         onSnapshotUpdated(summary)
                     } catch (e: Exception) {
                         onSnapshotUpdated(null)
@@ -900,7 +723,7 @@ fun SettingsScreen(
                 }
             }
         ) {
-            Text("Read Yesterday Summary")
+            Text("Read Today Summary")
         }
 
         Spacer(modifier = Modifier.height(12.dp))

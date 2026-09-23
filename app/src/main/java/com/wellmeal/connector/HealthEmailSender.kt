@@ -9,16 +9,18 @@ import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 import java.time.LocalDate
+import java.time.LocalTime
 import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 
 class HealthEmailSender {
 
     /**
-     * Builds human-readable text body for the Daily Health Email report.
+     * Builds human-readable text body for the WellMeal Health Data email report.
      */
     fun buildEmailBody(
         snapshot: DailyHealthSnapshot,
-        profile: HealthProfile?,
+        asOfTime: String = LocalTime.now(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("HH:mm")),
         timezone: String = ZoneId.systemDefault().id
     ): String {
         val stepsText = snapshot.steps?.let { "$it" } ?: "Not available"
@@ -30,19 +32,11 @@ class HealthEmailSender {
 
         val sleepText = snapshot.sleepMinutes?.let { "$it min" } ?: "Not available"
 
-        val allergiesText = profile?.allergies?.takeIf { it.isNotEmpty() }
-            ?.joinToString(", ") { it.name } ?: "None"
-
-        val dietaryText = profile?.dietaryRestrictions?.takeIf { it.isNotEmpty() }
-            ?.joinToString(", ") ?: "None"
-
-        val medicationsText = profile?.medications?.takeIf { it.isNotEmpty() }
-            ?.joinToString(", ") { it.name } ?: "None"
-
         return """
-            Wellmeal Daily Health Report
+            WellMeal Health Data
 
             Date: ${snapshot.date}
+            As of: $asOfTime
             Timezone: $timezone
 
             Activity
@@ -57,13 +51,19 @@ class HealthEmailSender {
             Sleep
             Total: $sleepText
 
-            Medical Profile
-            Allergies: $allergiesText
-            Dietary restrictions: $dietaryText
-            Medications: $medicationsText
-
             Generated automatically by Wellmeal Connector.
         """.trimIndent()
+    }
+
+    /**
+     * Backward-compatible overload accepting profile parameter.
+     */
+    fun buildEmailBody(
+        snapshot: DailyHealthSnapshot,
+        profile: HealthProfile?,
+        timezone: String = ZoneId.systemDefault().id
+    ): String {
+        return buildEmailBody(snapshot = snapshot, timezone = timezone)
     }
 
     /**
@@ -75,7 +75,7 @@ class HealthEmailSender {
         date: LocalDate,
         bodyText: String,
         dailyFile: File?,
-        profileFile: File?
+        profileFile: File? = null
     ): Result<Unit> = withContext(Dispatchers.IO) {
         if (recipientEmail.isBlank()) {
             return@withContext Result.failure(IllegalArgumentException("Recipient email is empty"))
@@ -104,18 +104,6 @@ class HealthEmailSender {
                 )
             }
 
-            if (profileFile != null && profileFile.exists()) {
-                val bytes = profileFile.readBytes()
-                val base64Data = Base64.encodeToString(bytes, Base64.NO_WRAP)
-                attachmentsArray.put(
-                    JSONObject()
-                        .put("@odata.type", "#microsoft.graph.fileAttachment")
-                        .put("name", "profile.json")
-                        .put("contentType", "application/json")
-                        .put("contentBytes", base64Data)
-                )
-            }
-
             val emailAddressJson = JSONObject().put("address", recipientEmail)
             val recipientJson = JSONObject().put("emailAddress", emailAddressJson)
             val toRecipientsArray = JSONArray().put(recipientJson)
@@ -125,7 +113,7 @@ class HealthEmailSender {
                 .put("content", bodyText)
 
             val messageJson = JSONObject()
-                .put("subject", "[Wellmeal Daily] $date")
+                .put("subject", "WellMeal Health Data")
                 .put("body", bodyJson)
                 .put("toRecipients", toRecipientsArray)
                 .put("attachments", attachmentsArray)

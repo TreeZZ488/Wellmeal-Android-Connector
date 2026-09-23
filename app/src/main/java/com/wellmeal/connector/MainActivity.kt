@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -41,7 +40,6 @@ import androidx.compose.ui.unit.dp
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.HealthConnectFeatures
 import androidx.health.connect.client.PermissionController
-import androidx.health.connect.client.feature.ExperimentalPersonalHealthRecordApi
 import androidx.health.connect.client.permission.HealthPermission
 import androidx.health.connect.client.records.ExerciseSessionRecord
 import androidx.health.connect.client.records.HeartRateRecord
@@ -54,6 +52,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import kotlinx.coroutines.launch
+import java.time.LocalDate
 
 class MainActivity : ComponentActivity() {
 
@@ -70,12 +69,10 @@ class MainActivity : ComponentActivity() {
 
 enum class Screen(val route: String, val title: String, val icon: ImageVector) {
     Home("home", "Home", Icons.Default.Home),
-    MedicalProfile("medical_profile", "Medical Profile", Icons.Default.Person),
     History("history", "History", Icons.Default.DateRange),
     Settings("settings", "Settings", Icons.Default.Settings)
 }
 
-@OptIn(ExperimentalPersonalHealthRecordApi::class)
 @Composable
 fun HealthConnectScreen() {
 
@@ -112,13 +109,6 @@ fun HealthConnectScreen() {
         HealthConnectClient.getOrCreate(context)
     }
 
-    // Check Personal Health Record support.
-    val personalHealthRecordAvailable = remember {
-        healthConnectClient.features.getFeatureStatus(
-            HealthConnectFeatures.FEATURE_PERSONAL_HEALTH_RECORD
-        ) == HealthConnectFeatures.FEATURE_STATUS_AVAILABLE
-    }
-
     // Define fitness permissions.
     val fitnessPermissions = remember {
         setOf(
@@ -134,17 +124,6 @@ fun HealthConnectScreen() {
             HealthPermission.getReadPermission(
                 ExerciseSessionRecord::class
             )
-        )
-    }
-
-    // Define optional medical profile permissions.
-    val medicalPermissions = remember {
-        setOf(
-            HealthPermission
-                .PERMISSION_READ_MEDICAL_DATA_ALLERGIES_INTOLERANCES,
-
-            HealthPermission
-                .PERMISSION_READ_MEDICAL_DATA_MEDICATIONS
         )
     }
 
@@ -168,17 +147,6 @@ fun HealthConnectScreen() {
 
     // Request fitness permissions.
     val fitnessPermissionLauncher =
-        rememberLauncherForActivityResult(
-            PermissionController
-                .createRequestPermissionResultContract()
-        ) { result ->
-
-            grantedPermissions =
-                grantedPermissions + result
-        }
-
-    // Request optional medical profile permissions.
-    val medicalPermissionLauncher =
         rememberLauncherForActivityResult(
             PermissionController
                 .createRequestPermissionResultContract()
@@ -218,16 +186,6 @@ fun HealthConnectScreen() {
             fitnessPermissions
         )
 
-    val medicalGrantedCount =
-        medicalPermissions.count {
-            grantedPermissions.contains(it)
-        }
-
-    val medicalAllGranted =
-        grantedPermissions.containsAll(
-            medicalPermissions
-        )
-
     val backgroundReadGranted =
         grantedPermissions.contains(
             HealthPermission.PERMISSION_READ_HEALTH_DATA_IN_BACKGROUND
@@ -240,36 +198,6 @@ fun HealthConnectScreen() {
 
     val jsonExporter = remember {
         HealthJsonExporter(context)
-    }
-
-    val medicalRepository = remember {
-        MedicalProfileRepository(context)
-    }
-
-    val medicalProfileParser = remember {
-        MedicalProfileParser()
-    }
-
-    var medicalResult by remember {
-        mutableStateOf<String?>(null)
-    }
-
-    var healthProfile by remember {
-        mutableStateOf<HealthProfile?>(null)
-    }
-
-    val dietaryRestrictionStore = remember {
-        DietaryRestrictionStore(context)
-    }
-
-    var dietaryRestrictions by remember {
-        mutableStateOf(
-            dietaryRestrictionStore.load()
-        )
-    }
-
-    val profileJsonExporter = remember {
-        HealthProfileJsonExporter(context)
     }
 
     val authManager = remember {
@@ -335,7 +263,7 @@ fun HealthConnectScreen() {
         )
     }
 
-    var uploadResult by remember {
+    var exportResult by remember {
         mutableStateOf<String?>(null)
     }
 
@@ -362,10 +290,6 @@ fun HealthConnectScreen() {
         mutableStateOf<String?>(null)
     }
 
-    var exportResult by remember {
-        mutableStateOf<String?>(null)
-    }
-
     val navController = rememberNavController()
 
     Scaffold(
@@ -376,7 +300,6 @@ fun HealthConnectScreen() {
 
                 val screens = listOf(
                     Screen.Home,
-                    Screen.MedicalProfile,
                     Screen.History,
                     Screen.Settings
                 )
@@ -411,8 +334,6 @@ fun HealthConnectScreen() {
                     authManager = authManager,
                     isSyncing = isSyncing,
                     lastSyncResult = lastSyncResult,
-                    healthProfile = healthProfile,
-                    dietaryRestrictions = dietaryRestrictions,
                     syncHistoryStore = syncHistoryStore,
                     syncSettings = syncSettings,
                     backgroundReadAvailable = backgroundReadAvailable,
@@ -426,7 +347,7 @@ fun HealthConnectScreen() {
                                 lastSyncResult = result
                             } catch (e: Exception) {
                                 lastSyncResult = SyncResult(
-                                    date = java.time.LocalDate.now().minusDays(1),
+                                    date = LocalDate.now(),
                                     dailyUploaded = false,
                                     latestUploaded = false,
                                     profileStatus = ProfileSyncStatus.SKIPPED,
@@ -436,30 +357,6 @@ fun HealthConnectScreen() {
                                 isSyncing = false
                             }
                         }
-                    }
-                )
-            }
-
-            composable(Screen.MedicalProfile.route) {
-                MedicalProfileScreen(
-                    healthProfile = healthProfile,
-                    dietaryRestrictions = dietaryRestrictions,
-                    onAddDietaryRestriction = { newRestriction ->
-                        val alreadyExists = dietaryRestrictions.any {
-                            it.equals(newRestriction, ignoreCase = true)
-                        }
-                        if (!alreadyExists) {
-                            val updated = (dietaryRestrictions + newRestriction).sortedBy { it.lowercase() }
-                            dietaryRestrictions = updated
-                            dietaryRestrictionStore.save(updated)
-                            healthProfile = healthProfile?.copy(dietaryRestrictions = updated)
-                        }
-                    },
-                    onRemoveDietaryRestriction = { restriction ->
-                        val updated = dietaryRestrictions.filterNot { it == restriction }
-                        dietaryRestrictions = updated
-                        dietaryRestrictionStore.save(updated)
-                        healthProfile = healthProfile?.copy(dietaryRestrictions = updated)
                     }
                 )
             }
@@ -500,29 +397,12 @@ fun HealthConnectScreen() {
                     authManager = authManager,
                     oneDriveUploader = oneDriveUploader,
                     healthEmailSender = healthEmailSender,
-                    personalHealthRecordAvailable = personalHealthRecordAvailable,
                     fitnessAllGranted = fitnessAllGranted,
                     fitnessGrantedCount = fitnessGrantedCount,
                     fitnessPermissionsSize = fitnessPermissions.size,
                     onLaunchFitnessPermission = {
                         fitnessPermissionLauncher.launch(fitnessPermissions)
                     },
-                    medicalAllGranted = medicalAllGranted,
-                    medicalGrantedCount = medicalGrantedCount,
-                    medicalPermissionsSize = medicalPermissions.size,
-                    onLaunchMedicalPermission = {
-                        medicalPermissionLauncher.launch(medicalPermissions)
-                    },
-                    medicalRepository = medicalRepository,
-                    medicalProfileParser = medicalProfileParser,
-                    healthProfile = healthProfile,
-                    onHealthProfileUpdated = { healthProfile = it },
-                    dietaryRestrictions = dietaryRestrictions,
-                    profileJsonExporter = profileJsonExporter,
-                    medicalResult = medicalResult,
-                    onMedicalResultUpdated = { medicalResult = it },
-                    uploadResult = uploadResult,
-                    onUploadResultUpdated = { uploadResult = it },
                     repository = repository,
                     jsonExporter = jsonExporter,
                     snapshot = snapshot,

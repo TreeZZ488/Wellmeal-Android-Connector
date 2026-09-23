@@ -1,7 +1,6 @@
 package com.wellmeal.connector
 
 import android.content.Context
-import androidx.health.connect.client.feature.ExperimentalPersonalHealthRecordApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -27,19 +26,12 @@ data class SyncResult(
     val date: LocalDate,
     val dailyUploaded: Boolean,
     val latestUploaded: Boolean,
-    val profileStatus: ProfileSyncStatus,
+    val profileStatus: ProfileSyncStatus = ProfileSyncStatus.SKIPPED,
     val emailStatus: EmailDeliveryStatus = EmailDeliveryStatus.DISABLED,
     val emailError: String? = null,
     val retryable: Boolean = false,
     val profileError: String? = null,
     val error: String? = null
-)
-
-private data class ProfileSyncResult(
-    val status: ProfileSyncStatus,
-    val error: String?,
-    val file: File?,
-    val isTransient: Boolean = false
 )
 
 class SyncCoordinator(
@@ -73,15 +65,14 @@ class SyncCoordinator(
     /**
      * Executes actual low-level sync steps without writing to SyncHistory.
      */
-    @OptIn(ExperimentalPersonalHealthRecordApi::class)
     suspend fun executeSyncAttempt(trigger: SyncTrigger = SyncTrigger.MANUAL): SyncResult {
-        // 1. Read yesterday's aggregated health data
+        // 1. Read today's cumulative health data up to current sync time
         val snapshot = try {
-            healthConnectRepository.getYesterdaySummary()
+            healthConnectRepository.getTodaySummary()
         } catch (e: Exception) {
             val isTransient = isTransientNetworkError(e)
             return SyncResult(
-                date = LocalDate.now().minusDays(1),
+                date = LocalDate.now(),
                 dailyUploaded = false,
                 latestUploaded = false,
                 profileStatus = ProfileSyncStatus.SKIPPED,
@@ -133,7 +124,7 @@ class SyncCoordinator(
             )
         }
 
-        // 5. Upload yesterday's daily JSON to daily/YYYY-MM-DD.json
+        // 5. Upload today's daily JSON to daily/YYYY-MM-DD.json
         val dailyPath = "daily/${snapshot.date}.json"
         val dailyUploadResult = oneDriveUploader.uploadToAppFolderPath(
             accessToken = accessToken,
@@ -174,119 +165,28 @@ class SyncCoordinator(
             )
         }
 
-        // 7. Rebuild current Medical Profile, export locally, and upload/overwrite OneDrive profile.json
-        val profileResult = syncMedicalProfile(accessToken)
-
-        // 8. Optional Daily Health Email delivery
-        val (emailStatus, emailError) = processDailyEmail(snapshot, trigger, dailyFile, profileResult.file)
+        // 7. Optional Daily Health Email delivery
+        val (emailStatus, emailError) = processDailyEmail(snapshot, trigger, dailyFile)
 
         return SyncResult(
             date = snapshot.date,
             dailyUploaded = true,
             latestUploaded = true,
-            profileStatus = profileResult.status,
+            profileStatus = ProfileSyncStatus.SKIPPED,
             emailStatus = emailStatus,
             emailError = emailError,
-            retryable = profileResult.isTransient,
-            profileError = profileResult.error
+            retryable = false,
+            profileError = null
         )
-    }
-
-    /**
-     * Reads current Medical Profile state. If PHR permissions are missing or read fails,
-     * returns ProfileSyncStatus.FAILED without overwriting OneDrive profile.json with empty data.
-     */
-    @OptIn(ExperimentalPersonalHealthRecordApi::class)
-    private suspend fun syncMedicalProfile(accessToken: String): ProfileSyncResult {
-        val parser = MedicalProfileParser()
-        val medicalRepo = MedicalProfileRepository(context)
-        val store = DietaryRestrictionStore(context)
-        val exporter = HealthProfileJsonExporter(context)
-
-        // 1. Read Health Connect PHR allergies and medications
-        val allergies = try {
-            medicalRepo.readAllergies()
-        } catch (e: Exception) {
-            return ProfileSyncResult(
-                status = ProfileSyncStatus.FAILED,
-                error = "Health Connect medical permission missing or allergy read failed: ${e.message}",
-                file = null,
-                isTransient = false
-            )
-        }
-
-        val medications = try {
-            medicalRepo.readMedications()
-        } catch (e: Exception) {
-            return ProfileSyncResult(
-                status = ProfileSyncStatus.FAILED,
-                error = "Health Connect medical permission missing or medication read failed: ${e.message}",
-                file = null,
-                isTransient = false
-            )
-        }
-
-        // 2. Read locally managed dietary restrictions (always preserved)
-        val dietaryRestrictions = try {
-            store.load()
-        } catch (_: Exception) {
-            emptyList()
-        }
-
-        // 3. Rebuild HealthProfile (0 records from a successful read is a valid empty profile)
-        val healthProfile = parser.parse(
-            allergies = allergies,
-            medications = medications,
-            dietaryRestrictions = dietaryRestrictions
-        )
-
-        // 4. Export to local profile.json
-        val profileFile = try {
-            exporter.exportProfile(healthProfile)
-        } catch (e: Exception) {
-            return ProfileSyncResult(
-                status = ProfileSyncStatus.FAILED,
-                error = "Failed to generate profile.json locally: ${e.message}",
-                file = null,
-                isTransient = false
-            )
-        }
-
-        // 5. Upload/overwrite OneDrive profile.json
-        val uploadResult = oneDriveUploader.uploadToAppFolderPath(
-            accessToken = accessToken,
-            file = profileFile,
-            relativePath = "profile.json"
-        )
-
-        return if (uploadResult.isSuccess) {
-            ProfileSyncResult(
-                status = ProfileSyncStatus.UPLOADED,
-                error = null,
-                file = profileFile,
-                isTransient = false
-            )
-        } else {
-            val uploadError = uploadResult.exceptionOrNull()
-            val isTransient = isTransientNetworkError(uploadError)
-            ProfileSyncResult(
-                status = ProfileSyncStatus.FAILED,
-                error = uploadError?.message,
-                file = profileFile,
-                isTransient = isTransient
-            )
-        }
     }
 
     /**
      * Handles optional daily health email delivery during automatic sync.
      */
-    @OptIn(ExperimentalPersonalHealthRecordApi::class)
     private suspend fun processDailyEmail(
         snapshot: DailyHealthSnapshot,
         trigger: SyncTrigger,
-        dailyFile: File?,
-        profileFile: File?
+        dailyFile: File?
     ): Pair<EmailDeliveryStatus, String?> {
         val settings = syncSettingsStore.load()
 
@@ -299,11 +199,6 @@ class SyncCoordinator(
             return Pair(EmailDeliveryStatus.SKIPPED, null)
         }
 
-        // Check idempotency: skip if already emailed for this date
-        if (settings.lastEmailedDate == snapshot.date.toString()) {
-            return Pair(EmailDeliveryStatus.SKIPPED, null)
-        }
-
         // Acquire Mail.Send token silently
         val mailTokenResult = acquireMailToken()
         val mailAccessToken = mailTokenResult.getOrElse {
@@ -313,31 +208,13 @@ class SyncCoordinator(
             )
         }
 
-        // Read health profile for email body
-        val healthProfile = try {
-            val parser = MedicalProfileParser()
-            val medicalRepo = MedicalProfileRepository(context)
-            val store = DietaryRestrictionStore(context)
-            val allergies = try { medicalRepo.readAllergies() } catch (_: Exception) { emptyList() }
-            val medications = try { medicalRepo.readMedications() } catch (_: Exception) { emptyList() }
-            val dietary = try { store.load() } catch (_: Exception) { emptyList() }
-            parser.parse(
-                allergies = allergies,
-                medications = medications,
-                dietaryRestrictions = dietary
-            )
-        } catch (_: Exception) {
-            null
-        }
-
-        val bodyText = healthEmailSender.buildEmailBody(snapshot, healthProfile)
+        val bodyText = healthEmailSender.buildEmailBody(snapshot)
         val sendResult = healthEmailSender.sendDailyHealthEmail(
             accessToken = mailAccessToken,
             recipientEmail = settings.emailRecipient,
             date = snapshot.date,
             bodyText = bodyText,
-            dailyFile = dailyFile,
-            profileFile = profileFile
+            dailyFile = dailyFile
         )
 
         return if (sendResult.isSuccess) {
@@ -358,7 +235,7 @@ class SyncCoordinator(
         try {
             val outcome = when {
                 !result.dailyUploaded || !result.latestUploaded || result.error != null -> SyncOutcome.FAILED
-                result.profileStatus == ProfileSyncStatus.FAILED || result.emailStatus == EmailDeliveryStatus.FAILED -> SyncOutcome.PARTIAL
+                result.emailStatus == EmailDeliveryStatus.FAILED -> SyncOutcome.PARTIAL
                 else -> SyncOutcome.SUCCESS
             }
 
