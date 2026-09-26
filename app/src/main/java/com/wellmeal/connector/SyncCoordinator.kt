@@ -42,7 +42,8 @@ class SyncCoordinator(
     private val oneDriveUploader: OneDriveUploader,
     private val syncHistoryStore: SyncHistoryStore = SyncHistoryStore(context),
     private val syncSettingsStore: SyncSettingsStore = SyncSettingsStore(context),
-    private val healthEmailSender: HealthEmailSender = HealthEmailSender()
+    private val healthEmailSender: HealthEmailSender = HealthEmailSender(),
+    private val diagnosticStore: AutoSyncDiagnosticStore = AutoSyncDiagnosticStore(context)
 ) {
 
     /**
@@ -66,9 +67,14 @@ class SyncCoordinator(
      * Executes actual low-level sync steps without writing to SyncHistory.
      */
     suspend fun executeSyncAttempt(trigger: SyncTrigger = SyncTrigger.MANUAL): SyncResult {
+        val isAuto = trigger == SyncTrigger.AUTOMATIC
+
         // 1. Read today's cumulative health data up to current sync time
+        if (isAuto) diagnosticStore.recordStage(SyncDiagnosticStage.READING_HEALTH_DATA)
         val snapshot = try {
             healthConnectRepository.getTodaySummary()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
             val isTransient = isTransientNetworkError(e)
             return SyncResult(
@@ -82,6 +88,7 @@ class SyncCoordinator(
         }
 
         // 2. Export daily health snapshot to local JSON
+        if (isAuto) diagnosticStore.recordStage(SyncDiagnosticStage.EXPORTING_JSON)
         val dailyFile = try {
             healthJsonExporter.exportDailyHealth(snapshot)
         } catch (e: Exception) {
@@ -96,6 +103,7 @@ class SyncCoordinator(
         }
 
         // 3. Acquire Microsoft Graph access token silently for OneDrive
+        if (isAuto) diagnosticStore.recordStage(SyncDiagnosticStage.ACQUIRING_ONEDRIVE_TOKEN)
         val tokenResult = acquireToken()
         val accessToken = tokenResult.getOrElse {
             val isTransient = isTransientNetworkError(it)
@@ -110,6 +118,7 @@ class SyncCoordinator(
         }
 
         // 4. Ensure the 'daily' folder exists in OneDrive App Folder
+        if (isAuto) diagnosticStore.recordStage(SyncDiagnosticStage.CHECKING_ONEDRIVE_FOLDER)
         val folderResult = oneDriveUploader.ensureFolder(accessToken, "daily")
         if (folderResult.isFailure) {
             val err = folderResult.exceptionOrNull()
@@ -125,6 +134,7 @@ class SyncCoordinator(
         }
 
         // 5. Upload today's daily JSON to daily/YYYY-MM-DD.json
+        if (isAuto) diagnosticStore.recordStage(SyncDiagnosticStage.UPLOADING_DAILY)
         val dailyPath = "daily/${snapshot.date}.json"
         val dailyUploadResult = oneDriveUploader.uploadToAppFolderPath(
             accessToken = accessToken,
@@ -146,6 +156,7 @@ class SyncCoordinator(
         }
 
         // 6. Upload exact same daily JSON to latest.json at root of App Folder
+        if (isAuto) diagnosticStore.recordStage(SyncDiagnosticStage.UPLOADING_LATEST)
         val latestUploadResult = oneDriveUploader.uploadToAppFolderPath(
             accessToken = accessToken,
             file = dailyFile,
@@ -200,6 +211,7 @@ class SyncCoordinator(
         }
 
         // Acquire Mail.Send token silently
+        diagnosticStore.recordStage(SyncDiagnosticStage.ACQUIRING_MAIL_TOKEN)
         val mailTokenResult = acquireMailToken()
         val mailAccessToken = mailTokenResult.getOrElse {
             return Pair(
@@ -208,7 +220,25 @@ class SyncCoordinator(
             )
         }
 
-        val bodyText = healthEmailSender.buildEmailBody(snapshot)
+        // Retrieve yesterday's Health Connect snapshot for the email report
+        diagnosticStore.recordStage(SyncDiagnosticStage.READING_YESTERDAY)
+        val yesterdaySnapshot = try {
+            healthConnectRepository.getYesterdaySummary()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            return Pair(
+                EmailDeliveryStatus.FAILED,
+                "Failed to read previous day Health Connect data: ${e.message}"
+            )
+        }
+
+        val bodyText = healthEmailSender.buildEmailBody(
+            todaySnapshot = snapshot,
+            yesterdaySnapshot = yesterdaySnapshot
+        )
+
+        diagnosticStore.recordStage(SyncDiagnosticStage.SENDING_EMAIL)
         val sendResult = healthEmailSender.sendDailyHealthEmail(
             accessToken = mailAccessToken,
             recipientEmail = settings.emailRecipient,
@@ -233,6 +263,10 @@ class SyncCoordinator(
      */
     fun recordSyncHistory(result: SyncResult, trigger: SyncTrigger) {
         try {
+            if (trigger == SyncTrigger.AUTOMATIC) {
+                diagnosticStore.recordStage(SyncDiagnosticStage.WRITING_HISTORY)
+            }
+
             val outcome = when {
                 !result.dailyUploaded || !result.latestUploaded || result.error != null -> SyncOutcome.FAILED
                 result.emailStatus == EmailDeliveryStatus.FAILED -> SyncOutcome.PARTIAL

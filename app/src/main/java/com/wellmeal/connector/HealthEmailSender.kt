@@ -16,7 +16,66 @@ import java.time.format.DateTimeFormatter
 class HealthEmailSender {
 
     /**
-     * Builds human-readable text body for the WellMeal Health Data email report.
+     * Builds human-readable text body with Today's Data and Yesterday's Data.
+     */
+    fun buildEmailBody(
+        todaySnapshot: DailyHealthSnapshot,
+        yesterdaySnapshot: DailyHealthSnapshot,
+        asOfTime: String = LocalTime.now(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("HH:mm")),
+        timezone: String = ZoneId.systemDefault().id
+    ): String {
+        fun formatSection(snapshot: DailyHealthSnapshot, includeAsOf: Boolean): String {
+            val stepsText = snapshot.steps?.let { "$it" } ?: "Not available"
+            val exerciseText = snapshot.exerciseMinutes?.let { "$it min" } ?: "Not available"
+            val hrAvgText = snapshot.heartRateAverage?.let { "$it bpm" } ?: "Not available"
+            val hrMinText = snapshot.heartRateMinimum?.let { "$it bpm" } ?: "Not available"
+            val hrMaxText = snapshot.heartRateMaximum?.let { "$it bpm" } ?: "Not available"
+            val sleepText = snapshot.sleepMinutes?.let { "$it min" } ?: "Not available"
+
+            val dateAndAsOf = if (includeAsOf) {
+                "Date: ${snapshot.date}\nAs of: $asOfTime"
+            } else {
+                "Date: ${snapshot.date}"
+            }
+
+            return """
+                $dateAndAsOf
+
+                Activity
+                Steps: $stepsText
+                Exercise: $exerciseText
+
+                Heart
+                Average: $hrAvgText
+                Minimum: $hrMinText
+                Maximum: $hrMaxText
+
+                Sleep
+                Total: $sleepText
+            """.trimIndent()
+        }
+
+        val todaySection = formatSection(todaySnapshot, includeAsOf = true)
+        val yesterdaySection = formatSection(yesterdaySnapshot, includeAsOf = false)
+
+        return """
+            WellMeal Health Data
+
+            Timezone: $timezone
+
+            Today's Data
+            $todaySection
+
+
+            Yesterday's Data
+            $yesterdaySection
+
+            Generated automatically by Wellmeal Connector.
+        """.trimIndent()
+    }
+
+    /**
+     * Single snapshot overload for backward compatibility.
      */
     fun buildEmailBody(
         snapshot: DailyHealthSnapshot,
@@ -25,11 +84,9 @@ class HealthEmailSender {
     ): String {
         val stepsText = snapshot.steps?.let { "$it" } ?: "Not available"
         val exerciseText = snapshot.exerciseMinutes?.let { "$it min" } ?: "Not available"
-
         val hrAvgText = snapshot.heartRateAverage?.let { "$it bpm" } ?: "Not available"
         val hrMinText = snapshot.heartRateMinimum?.let { "$it bpm" } ?: "Not available"
         val hrMaxText = snapshot.heartRateMaximum?.let { "$it bpm" } ?: "Not available"
-
         val sleepText = snapshot.sleepMinutes?.let { "$it min" } ?: "Not available"
 
         return """

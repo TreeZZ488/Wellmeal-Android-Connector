@@ -21,28 +21,39 @@ class AutomaticSyncScheduler(
     /**
      * Cancels all scheduled production automatic sync slot jobs.
      */
-    fun cancelAll() {
+    fun cancelAll(reason: String = "unspecified") {
+        Log.d(TAG, "cancelAll called: reason=$reason")
         for (i in 0 until MAX_SLOTS) {
-            workManager.cancelUniqueWork(getSlotWorkName(i))
+            val workName = getSlotWorkName(i)
+            Log.d(TAG, "cancelling workName=$workName reason=$reason")
+            workManager.cancelUniqueWork(workName)
         }
     }
 
     /**
-     * Reschedules production automatic sync slot jobs based on current settings and background permission.
+     * Reschedules production automatic sync slot jobs based on explicit user settings changes.
      * Uses CANCEL_AND_REENQUEUE to apply updated times/constraints immediately.
      */
     fun reschedule(
         settings: SyncSettings,
-        backgroundAccessGranted: Boolean
+        backgroundAccessGranted: Boolean,
+        source: String = "explicit_user_settings_change"
     ) {
-        Log.d(TAG, "reschedule called enabled=${settings.automaticSyncEnabled} background=$backgroundAccessGranted times=${settings.syncTimes} wifiOnly=${settings.wifiOnly} avoidLowBattery=${settings.avoidLowBattery}")
-
-        cancelAll()
+        Log.d(
+            TAG,
+            "reschedule called source=$source enabled=${settings.automaticSyncEnabled} background=$backgroundAccessGranted times=${settings.syncTimes} wifiOnly=${settings.wifiOnly} avoidLowBattery=${settings.avoidLowBattery}"
+        )
 
         if (!settings.automaticSyncEnabled || !backgroundAccessGranted) {
-            Log.d(TAG, "reschedule early return enabled=${settings.automaticSyncEnabled} background=$backgroundAccessGranted")
+            Log.d(
+                TAG,
+                "reschedule canceling work: enabled=${settings.automaticSyncEnabled} background=$backgroundAccessGranted source=$source"
+            )
+            cancelAll(reason = "reschedule: automatic sync disabled or background access revoked ($source)")
             return
         }
+
+        cancelAll(reason = "reschedule: re-enqueuing updated user settings ($source)")
 
         val normalized = settings.normalized()
         val times = normalized.syncTimes
@@ -61,28 +72,29 @@ class AutomaticSyncScheduler(
     }
 
     /**
-     * Ensures production automatic sync slot jobs exist without resetting the daily countdown if already scheduled.
-     * Called on app startup.
+     * Ensures production automatic sync slot jobs exist without resetting or canceling work if already scheduled.
+     * Idempotent and non-destructive. Called on app startup.
      */
     fun ensureScheduled(
         settings: SyncSettings,
-        backgroundAccessGranted: Boolean
+        backgroundAccessGranted: Boolean,
+        source: String = "app_startup"
     ) {
-        Log.d(TAG, "ensureScheduled called enabled=${settings.automaticSyncEnabled} background=$backgroundAccessGranted times=${settings.syncTimes}")
+        Log.d(
+            TAG,
+            "ensureScheduled called source=$source enabled=${settings.automaticSyncEnabled} background=$backgroundAccessGranted times=${settings.syncTimes}"
+        )
 
         if (!settings.automaticSyncEnabled || !backgroundAccessGranted) {
-            Log.d(TAG, "ensureScheduled early return enabled=${settings.automaticSyncEnabled} background=$backgroundAccessGranted")
-            cancelAll()
+            Log.d(
+                TAG,
+                "ensureScheduled skipped (non-destructive): enabled=${settings.automaticSyncEnabled} background=$backgroundAccessGranted source=$source"
+            )
             return
         }
 
         val normalized = settings.normalized()
         val times = normalized.syncTimes
-
-        // Cancel unused slots beyond configured frequency
-        for (i in times.size until MAX_SLOTS) {
-            workManager.cancelUniqueWork(getSlotWorkName(i))
-        }
 
         times.forEachIndexed { index, time ->
             if (index < MAX_SLOTS) {
@@ -129,7 +141,10 @@ class AutomaticSyncScheduler(
             )
             .build()
 
-        Log.d(TAG, "enqueue slot=$slotIndex name=$workName initialDelayMinutes=$initialDelayMinutes policy=$policy wifiOnly=$wifiOnly avoidLowBattery=$avoidLowBattery")
+        Log.d(
+            TAG,
+            "enqueue slot=$slotIndex name=$workName initialDelayMinutes=$initialDelayMinutes policy=$policy wifiOnly=$wifiOnly avoidLowBattery=$avoidLowBattery"
+        )
 
         workManager.enqueueUniquePeriodicWork(
             workName,
@@ -137,7 +152,7 @@ class AutomaticSyncScheduler(
             workRequest
         )
 
-        Log.d(TAG, "enqueued slot=$slotIndex name=$workName successfully")
+        Log.d(TAG, "enqueued slot=$slotIndex name=$workName successfully with policy=$policy")
     }
 
     /**

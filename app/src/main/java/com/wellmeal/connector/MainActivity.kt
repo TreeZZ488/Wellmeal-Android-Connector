@@ -167,13 +167,22 @@ fun HealthConnectScreen() {
                 grantedPermissions + result
         }
 
+    var permissionsLoaded by remember {
+        mutableStateOf(false)
+    }
+
     // Read the existing permission state when the app starts.
     LaunchedEffect(Unit) {
-
-        grantedPermissions =
-            healthConnectClient
-                .permissionController
-                .getGrantedPermissions()
+        try {
+            grantedPermissions =
+                healthConnectClient
+                    .permissionController
+                    .getGrantedPermissions()
+        } catch (e: Exception) {
+            Log.e("HealthConnectScreen", "Failed to query granted permissions", e)
+        } finally {
+            permissionsLoaded = true
+        }
     }
 
     val fitnessGrantedCount =
@@ -239,10 +248,15 @@ fun HealthConnectScreen() {
         AutomaticSyncScheduler(context)
     }
 
-    LaunchedEffect(syncSettings, backgroundReadGranted) {
+    LaunchedEffect(syncSettings, backgroundReadGranted, permissionsLoaded) {
+        if (!permissionsLoaded) {
+            return@LaunchedEffect
+        }
+
         automaticSyncScheduler.ensureScheduled(
             settings = syncSettings,
-            backgroundAccessGranted = backgroundReadGranted
+            backgroundAccessGranted = backgroundReadGranted,
+            source = "app_startup_permissions_ready"
         )
     }
 
@@ -380,7 +394,8 @@ fun HealthConnectScreen() {
                         syncSettingsStore.save(updatedSettings)
                         automaticSyncScheduler.reschedule(
                             settings = updatedSettings,
-                            backgroundAccessGranted = backgroundReadGranted
+                            backgroundAccessGranted = backgroundReadGranted,
+                            source = "settings_screen_user_change"
                         )
                     },
                     backgroundReadAvailable = backgroundReadAvailable,

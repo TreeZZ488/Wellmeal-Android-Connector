@@ -27,6 +27,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -39,8 +40,9 @@ import androidx.work.WorkManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import java.io.File
-import java.time.LocalDate
+import java.time.Instant
 import java.time.LocalTime
+import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
@@ -495,20 +497,30 @@ fun SettingsScreen(
                         fun executeSendMail(token: String) {
                             scope.launch {
                                 try {
-                                    val date = LocalDate.now()
+                                    val todaySnapshot = try {
+                                        repository.getTodaySummary()
+                                    } catch (e: Exception) {
+                                        testEmailResult = "Failed to load today's Health Connect data: ${e.message}"
+                                        isTestingEmail = false
+                                        return@launch
+                                    }
+
+                                    val yesterdaySnapshot = try {
+                                        repository.getYesterdaySummary()
+                                    } catch (e: Exception) {
+                                        testEmailResult = "Failed to load previous day's Health Connect data: ${e.message}"
+                                        isTestingEmail = false
+                                        return@launch
+                                    }
+
+                                    val date = todaySnapshot.date
                                     val dailyFile = File(context.filesDir, "exports/health-$date.json")
 
-                                    val dummySnapshot = snapshot ?: DailyHealthSnapshot(
-                                        date = date,
-                                        steps = null,
-                                        heartRateAverage = null,
-                                        heartRateMinimum = null,
-                                        heartRateMaximum = null,
-                                        sleepMinutes = null,
-                                        exerciseMinutes = null
+                                    val bodyText = healthEmailSender.buildEmailBody(
+                                        todaySnapshot = todaySnapshot,
+                                        yesterdaySnapshot = yesterdaySnapshot
                                     )
 
-                                    val bodyText = healthEmailSender.buildEmailBody(dummySnapshot)
                                     val sendRes = healthEmailSender.sendDailyHealthEmail(
                                         accessToken = token,
                                         recipientEmail = recipient,
@@ -605,6 +617,109 @@ fun SettingsScreen(
         testStatusText?.let { status ->
             Spacer(modifier = Modifier.height(8.dp))
             Text(status)
+        }
+
+        // Automatic Sync Diagnostics section
+        Spacer(modifier = Modifier.height(20.dp))
+
+        Text(
+            text = "Automatic Sync Diagnostics",
+            style = MaterialTheme.typography.titleMedium
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        var refreshTrigger by remember { mutableStateOf(0) }
+
+        val slotWorkInfos by produceState<List<WorkInfo?>>(
+            initialValue = listOf(null, null, null),
+            key1 = refreshTrigger,
+            key2 = context
+        ) {
+            val wm = WorkManager.getInstance(context)
+            val list = mutableListOf<WorkInfo?>()
+            for (i in 0 until AutomaticSyncScheduler.MAX_SLOTS) {
+                val workName = AutomaticSyncScheduler.getSlotWorkName(i)
+                val infos = try {
+                    wm.getWorkInfosForUniqueWork(workName).get()
+                } catch (_: Exception) {
+                    emptyList()
+                }
+                list.add(infos.firstOrNull())
+            }
+            value = list
+        }
+
+        val lastDiagnosticData by produceState(
+            initialValue = AutoSyncDiagnosticData(),
+            key1 = refreshTrigger,
+            key2 = context
+        ) {
+            val diagnosticStore = AutoSyncDiagnosticStore(context)
+            value = diagnosticStore.loadData()
+        }
+
+        OutlinedButton(
+            onClick = { refreshTrigger++ }
+        ) {
+            Text("Refresh Schedule Status")
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // Persistent SyncWorker Diagnostic Card
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 4.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(12.dp)
+            ) {
+                Text(
+                    text = "Last Automatic Sync",
+                    style = MaterialTheme.typography.titleSmall
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text("Started: ${lastDiagnosticData.startedAt}")
+                Text("Last update: ${lastDiagnosticData.lastUpdatedAt}")
+                Text("Last stage: ${lastDiagnosticData.currentStage.name}")
+                Text("Completed: ${if (lastDiagnosticData.completed) "Yes" else "No"}")
+                Text("Last error: ${lastDiagnosticData.lastError ?: "None"}")
+                Text("Stop reason: ${lastDiagnosticData.stopReason ?: "None"}")
+            }
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        // Individual WorkManager Slots Cards
+        for (i in 0 until AutomaticSyncScheduler.MAX_SLOTS) {
+            val configuredTime = syncSettings.syncTimes.getOrNull(i)
+            val info = slotWorkInfos.getOrNull(i)
+
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(12.dp)
+                ) {
+                    Text(
+                        text = "Slot $i",
+                        style = MaterialTheme.typography.titleSmall
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text("Configured: ${configuredTime?.format(timeFormatter) ?: "Not set"}")
+                    if (info != null) {
+                        Text("State: ${info.state.name}")
+                        Text("Next run: ${formatNextScheduleTime(info.nextScheduleTimeMillis)}")
+                        Text("Attempts: ${info.runAttemptCount}")
+                    } else {
+                        Text("State: NOT SCHEDULED")
+                    }
+                }
+            }
         }
 
         // Microsoft Account section
@@ -749,6 +864,21 @@ fun SettingsScreen(
             Spacer(modifier = Modifier.height(12.dp))
             Text(it)
         }
+    }
+}
+
+/**
+ * Formats millis to local date/time string, or N/A if unset/invalid.
+ */
+private fun formatNextScheduleTime(millis: Long): String {
+    if (millis == Long.MAX_VALUE || millis <= 0) return "N/A"
+    return try {
+        val instant = Instant.ofEpochMilli(millis)
+        val zone = ZoneId.systemDefault()
+        val formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm", Locale.US)
+        formatter.format(instant.atZone(zone))
+    } catch (_: Exception) {
+        "N/A"
     }
 }
 
